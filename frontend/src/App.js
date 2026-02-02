@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import LoginPage from '@/pages/LoginPage';
 import DashboardHome from '@/pages/DashboardHome';
 import LineLosses from '@/pages/LineLosses';
+import EnergyConsumption from '@/pages/EnergyConsumption';
 import DashboardLayout from '@/components/DashboardLayout';
 import '@/App.css';
 
@@ -40,6 +41,13 @@ function App() {
               <ProtectedRoute>
                 <DashboardLayout>
                   <LineLosses />
+                </DashboardLayout>
+              </ProtectedRoute>
+            } />
+            <Route path="/energy-consumption" element={
+              <ProtectedRoute>
+                <DashboardLayout>
+                  <EnergyConsumption />
                 </DashboardLayout>
               </ProtectedRoute>
             } />

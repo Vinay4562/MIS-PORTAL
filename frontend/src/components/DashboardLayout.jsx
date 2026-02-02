@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/components/ThemeProvider';
 import { Button } from '@/components/ui/button';
-import { Menu, X, Zap, LogOut, Sun, Moon, TrendingDown } from 'lucide-react';
+import { Menu, X, Zap, LogOut, Sun, Moon, TrendingDown, Activity } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 export default function DashboardLayout({ children }) {
@@ -56,6 +56,19 @@ export default function DashboardLayout({ children }) {
           >
             <TrendingDown className="w-5 h-5" />
             <span className="font-medium">LINE LOSSES</span>
+          </button>
+
+          <button
+            onClick={() => navigate('/energy-consumption')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+              location.pathname === '/energy-consumption'
+                ? 'bg-blue-600 text-white'
+                : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+            }`}
+            data-testid="energy-consumption-menu"
+          >
+            <Activity className="w-5 h-5" />
+            <span className="font-medium">ENERGY CONSUMPTION</span>
           </button>
         </nav>
 

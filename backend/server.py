@@ -109,6 +109,48 @@ class DailyEntryUpdate(BaseModel):
     end2_export_initial: Optional[float] = None
     end2_export_final: Optional[float] = None
 
+class EnergySheet(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    meters: Optional[List['EnergyMeter']] = None
+
+class EnergyMeter(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    sheet_id: str
+    name: str
+    mf: float
+    unit: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class EnergyReading(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    meter_id: str
+    initial: float
+    final: float
+    consumption: float
+
+class EnergyEntry(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    sheet_id: str
+    date: str
+    readings: List[EnergyReading]
+    total_consumption: float
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+class EnergyReadingInput(BaseModel):
+    meter_id: str
+    final: float
+
+class EnergyEntryInput(BaseModel):
+    sheet_id: str
+    date: str
+    readings: List[EnergyReadingInput]
+
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
@@ -471,6 +513,303 @@ async def initialize_feeders(current_user: User = Depends(get_current_user)):
     
     await db.feeders.insert_many(feeders)
     return {"message": "Feeders initialized successfully", "count": len(feeders)}
+
+@api_router.post("/energy/init")
+async def initialize_energy_module(current_user: User = Depends(get_current_user)):
+    # Check if already initialized
+    if await db.energy_sheets.count_documents({}) > 0:
+        return {"message": "Energy module already initialized"}
+
+    # Create Sheets
+    sheets_data = ["ICT-1", "ICT-2", "ICT-3", "ICT-4", "33KV"]
+    sheet_ids = {}
+    
+    for name in sheets_data:
+        sheet = EnergySheet(name=name)
+        doc = sheet.model_dump()
+        await db.energy_sheets.insert_one(doc)
+        sheet_ids[name] = sheet.id
+
+    # Create Meters
+    meters = []
+    
+    # ICT Meters
+    for i in range(1, 5):
+        sheet_name = f"ICT-{i}"
+        s_id = sheet_ids[sheet_name]
+        meters.append(EnergyMeter(sheet_id=s_id, name="HV", mf=0.1 if i==1 else 1.0, unit="MWH")) # Example MF, user said fixed but didn't specify all. using 1.0 default or from screenshot
+        meters.append(EnergyMeter(sheet_id=s_id, name="IV", mf=1.5 if i==1 else 1.0, unit="MWH"))
+        # Note: Screenshot for ICT-1 shows HV MF=0.1, IV MF=1.5. I'll use those for ICT-1. Others 1.0 for now.
+
+    # 33KV Meters
+    s33_id = sheet_ids["33KV"]
+    meters.append(EnergyMeter(sheet_id=s33_id, name="Donthapally", mf=1000, unit="KWH")) # Screenshot says MF(0.2) but column says 1000? Wait.
+    # Screenshot 33KV: "MF(0.2)" in header? No, "MF(0.2)" might be the CT/PT ratio or something.
+    # But column C says "1000". And formula D=(B-A)*C. So MF is 1000.
+    # Another meter: "33KV Kandi", MF column says "4".
+    meters.append(EnergyMeter(sheet_id=s33_id, name="Kandi", mf=4, unit="KWH"))
+
+    for m in meters:
+        doc = m.model_dump()
+        await db.energy_meters.insert_one(doc)
+
+    return {"message": "Energy module initialized", "sheets": len(sheets_data), "meters": len(meters)}
+
+@api_router.get("/energy/sheets")
+async def get_energy_sheets(current_user: User = Depends(get_current_user)):
+    sheets = await db.energy_sheets.find({}, {"_id": 0}).to_list(100)
+    result = []
+    for sheet in sheets:
+        meters = await db.energy_meters.find({"sheet_id": sheet['id']}, {"_id": 0}).to_list(100)
+        sheet['meters'] = meters
+        result.append(sheet)
+    return result
+
+@api_router.get("/energy/entries/{sheet_id}")
+async def get_energy_entries(
+    sheet_id: str,
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    current_user: User = Depends(get_current_user)
+):
+    query = {"sheet_id": sheet_id}
+    if year and month:
+        start_date = f"{year}-{month:02d}-01"
+        if month == 12:
+            end_date = f"{year + 1}-01-01"
+        else:
+            end_date = f"{year}-{month + 1:02d}-01"
+        query['date'] = {"$gte": start_date, "$lt": end_date}
+    
+    entries = await db.energy_entries.find(query, {"_id": 0}).sort("date", 1).to_list(1000)
+    for entry in entries:
+        if isinstance(entry.get('created_at'), str):
+            entry['created_at'] = datetime.fromisoformat(entry['created_at'])
+        if isinstance(entry.get('updated_at'), str):
+            entry['updated_at'] = datetime.fromisoformat(entry['updated_at'])
+    return entries
+
+@api_router.post("/energy/entries")
+async def save_energy_entry(
+    entry_input: EnergyEntryInput,
+    current_user: User = Depends(get_current_user)
+):
+    # Get previous day's entry for initials
+    date_obj = datetime.strptime(entry_input.date, "%Y-%m-%d")
+    prev_date = (date_obj - timedelta(days=1)).strftime("%Y-%m-%d")
+    prev_entry = await db.energy_entries.find_one(
+        {"sheet_id": entry_input.sheet_id, "date": prev_date},
+        {"_id": 0}
+    )
+    
+    prev_finals = {}
+    if prev_entry:
+        for r in prev_entry['readings']:
+            prev_finals[r['meter_id']] = r['final']
+            
+    # Calculate readings
+    readings = []
+    total_consumption = 0
+    
+    for r_in in entry_input.readings:
+        meter = await db.energy_meters.find_one({"id": r_in.meter_id})
+        if not meter:
+            continue
+            
+        initial = prev_finals.get(r_in.meter_id, 0.0)
+        consumption = (r_in.final - initial) * meter['mf']
+        total_consumption += consumption
+        
+        readings.append(EnergyReading(
+            meter_id=r_in.meter_id,
+            initial=initial,
+            final=r_in.final,
+            consumption=consumption
+        ))
+        
+    # Upsert entry
+    existing = await db.energy_entries.find_one(
+        {"sheet_id": entry_input.sheet_id, "date": entry_input.date}
+    )
+    
+    entry_data = EnergyEntry(
+        sheet_id=entry_input.sheet_id,
+        date=entry_input.date,
+        readings=readings,
+        total_consumption=total_consumption
+    )
+    
+    doc = entry_data.model_dump()
+    doc['created_at'] = doc['created_at'].isoformat()
+    doc['updated_at'] = doc['updated_at'].isoformat()
+    
+    if existing:
+        # Preserve original created_at
+        doc['created_at'] = existing['created_at']
+        await db.energy_entries.replace_one({"_id": existing['_id']}, doc)
+    else:
+        await db.energy_entries.insert_one(doc)
+        
+    return entry_data
+
+@api_router.get("/energy/export/{sheet_id}/{year}/{month}")
+async def export_energy_sheet(
+    sheet_id: str,
+    year: int,
+    month: int,
+    current_user: User = Depends(get_current_user)
+):
+    sheet = await db.energy_sheets.find_one({"id": sheet_id}, {"_id": 0})
+    if not sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+        
+    meters = await db.energy_meters.find({"sheet_id": sheet_id}, {"_id": 0}).to_list(100)
+    
+    start_date = f"{year}-{month:02d}-01"
+    if month == 12:
+        end_date = f"{year + 1}-01-01"
+    else:
+        end_date = f"{year}-{month + 1:02d}-01"
+        
+    entries = await db.energy_entries.find(
+        {"sheet_id": sheet_id, "date": {"$gte": start_date, "$lt": end_date}},
+        {"_id": 0}
+    ).sort("date", 1).to_list(1000)
+    
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"{sheet['name']} - {month}-{year}"
+    
+    # Headers
+    headers = ["Date"]
+    for m in meters:
+        headers.extend([
+            f"{m['name']} Initial",
+            f"{m['name']} Final",
+            f"{m['name']} MF",
+            f"{m['name']} Consumption"
+        ])
+    headers.append("Total Consumption")
+    
+    header_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+    
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center")
+        
+    # Data
+    for entry in entries:
+        row = [entry['date']]
+        readings_map = {r['meter_id']: r for r in entry['readings']}
+        
+        for m in meters:
+            r = readings_map.get(m['id'])
+            if r:
+                row.extend([r['initial'], r['final'], m['mf'], r['consumption']])
+            else:
+                row.extend([0, 0, m['mf'], 0])
+                
+        row.append(entry['total_consumption'])
+        ws.append(row)
+        
+    # Auto-width
+    for col in ws.columns:
+        max_length = 0
+        column = col[0].column_letter
+        for cell in col:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(cell.value)
+            except:
+                pass
+        adjusted_width = (max_length + 2)
+        ws.column_dimensions[column].width = adjusted_width
+        
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    
+    filename = f"{sheet['name']}_{year}_{month:02d}.xlsx"
+    
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+@api_router.put("/energy/entries/{entry_id}", response_model=EnergyEntry)
+async def update_energy_entry(
+    entry_id: str,
+    entry_input: EnergyEntryInput,
+    current_user: User = Depends(get_current_user)
+):
+    # Verify entry exists
+    existing = await db.energy_entries.find_one({"id": entry_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Entry not found")
+
+    # Get previous day's entry for initials
+    date_obj = datetime.strptime(entry_input.date, "%Y-%m-%d")
+    prev_date = (date_obj - timedelta(days=1)).strftime("%Y-%m-%d")
+    prev_entry = await db.energy_entries.find_one(
+        {"sheet_id": entry_input.sheet_id, "date": prev_date},
+        {"_id": 0}
+    )
+    
+    prev_finals = {}
+    if prev_entry:
+        for r in prev_entry['readings']:
+            prev_finals[r['meter_id']] = r['final']
+            
+    # Calculate readings
+    readings = []
+    total_consumption = 0
+    
+    for r_in in entry_input.readings:
+        meter = await db.energy_meters.find_one({"id": r_in.meter_id})
+        if not meter:
+            continue
+            
+        initial = prev_finals.get(r_in.meter_id, 0.0)
+        consumption = (r_in.final - initial) * meter['mf']
+        total_consumption += consumption
+        
+        readings.append(EnergyReading(
+            meter_id=r_in.meter_id,
+            initial=initial,
+            final=r_in.final,
+            consumption=consumption
+        ))
+        
+    # Update entry
+    entry_data = EnergyEntry(
+        id=entry_id, # Preserve ID
+        sheet_id=entry_input.sheet_id,
+        date=entry_input.date,
+        readings=readings,
+        total_consumption=total_consumption,
+        created_at=existing['created_at'], # Preserve created_at
+        updated_at=datetime.now(timezone.utc)
+    )
+    
+    doc = entry_data.model_dump()
+    doc['created_at'] = doc['created_at'].isoformat()
+    doc['updated_at'] = doc['updated_at'].isoformat()
+    
+    await db.energy_entries.replace_one({"id": entry_id}, doc)
+        
+    return entry_data
+
+@api_router.delete("/energy/entries/{entry_id}")
+async def delete_energy_entry(entry_id: str, current_user: User = Depends(get_current_user)):
+    result = await db.energy_entries.delete_one({"id": entry_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return {"message": "Entry deleted successfully"}
+
 
 app.include_router(api_router)
 
