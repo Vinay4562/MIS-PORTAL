@@ -435,22 +435,22 @@ async def initialize_feeders(current_user: User = Depends(get_current_user)):
         return {"message": "Feeders already initialized", "count": existing_count}
     
     feeders_data = [
-        {"name": "400 KV Shanakrapally-Narsapur-1", "end1": "Shankarapally", "end2": "Narsapur", "mf": [0.2, 1, 0.2, 1]},
-        {"name": "400 KV Shanakrapally-MHRM-2", "end1": "Shankarapally", "end2": "Maheshwaram-2", "mf": [1, 1, 1, 1]},
-        {"name": "400 KV Shanakrapally-MHRM-1", "end1": "Shankarapally", "end2": "Maheshwaram-1", "mf": [1, 1, 1, 1]},
-        {"name": "400 KV Gajwel-1", "end1": "Shankarapally", "end2": "Gajwel", "mf": [1, 1, 1, 1]},
+        {"name": "400 KV Shanakrapally-Narsapur-1", "end1": "Shankarapally", "end2": "Narsapur", "mf": [0.2, 0.2, 1, 1]},
+        {"name": "400 KV Shanakrapally-MHRM-2", "end1": "Shankarapally", "end2": "Maheshwaram-2", "mf": [0.2, 0.2, 1, 1]},
+        {"name": "400 KV Shanakrapally-MHRM-1", "end1": "Shankarapally", "end2": "Maheshwaram-1", "mf": [0.2, 0.2, 1, 1]},
         {"name": "220 KV Sadasivapet-1", "end1": "Shankarapally", "end2": "Sadasivapet", "mf": [1, 1, 1.6, 1.6]},
+        {"name": "220 KV Sadasivapet-2", "end1": "Shankarapally", "end2": "Sadasivapet", "mf": [1, 1, 1.6, 1.6]},
         {"name": "220 KV Parigi-1", "end1": "Shankarapally", "end2": "Parigi", "mf": [1, 1, 1, 1]},
         {"name": "220 KV Parigi-2", "end1": "Shankarapally", "end2": "Parigi", "mf": [1, 1, 1, 1]},
         {"name": "220 KV Tandur", "end1": "Shankarapally", "end2": "Tandur", "mf": [1, 1, 1, 1]},
-        {"name": "220 KV Gachibowli-1", "end1": "Shankarapally", "end2": "Gachibowli", "mf": [1, 1, 1, 1]},
-        {"name": "220 KV Gachibowli-2", "end1": "Shankarapally", "end2": "Gachibowli", "mf": [1, 1, 1, 1]},
+        {"name": "220 KV Gachibowli-1", "end1": "Shankarapally", "end2": "Gachibowli", "mf": [2, 2, 2, 2]},
+        {"name": "220 KV Gachibowli-2", "end1": "Shankarapally", "end2": "Gachibowli", "mf": [2, 2, 2, 2]},
         {"name": "220 KV KethiReddyPally", "end1": "Shankarapally", "end2": "KethiReddyPally", "mf": [1, 1, 1, 1]},
         {"name": "400 KV KethiReddyPally-1", "end1": "Shankarapally", "end2": "KethiReddyPally", "mf": [1, 1, 1, 1]},
         {"name": "220 KV Yeddumailaram-1", "end1": "Shankarapally", "end2": "Yeddumailaram", "mf": [1, 1, 1, 1]},
         {"name": "220 KV Yeddumailaram-2", "end1": "Shankarapally", "end2": "Yeddumailaram", "mf": [1, 1, 1, 1]},
-        {"name": "400 KV Shanakrapally-Narsapur-2", "end1": "Shankarapally", "end2": "Narsapur", "mf": [0.2, 1, 0.2, 1]},
-        {"name": "400 KV Nizamabad-1&2", "end1": "Shankarapally", "end2": "Nizamabad", "mf": [1, 1, 1, 1]},
+        {"name": "400 KV Shanakrapally-Narsapur-2", "end1": "Shankarapally", "end2": "Narsapur", "mf": [0.2, 0.2, 1, 1]},
+        {"name": "400 KV Nizamabad-1&2", "end1": "Shankarapally", "end2": "Nizamabad", "mf": [1000, 1000, 1000, 1000]},
         {"name": "400 KV KethiReddyPally-2", "end1": "Shankarapally", "end2": "KethiReddyPally", "mf": [1, 1, 1, 1]}
     ]
     

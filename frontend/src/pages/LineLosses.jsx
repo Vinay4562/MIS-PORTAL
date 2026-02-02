@@ -11,6 +11,26 @@ import { Download, Plus, Calendar } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
+const FEEDER_ORDER = [
+  "400 KV Shanakrapally-MHRM-2",
+  "400 KV Shanakrapally-MHRM-1",
+  "400 KV Shanakrapally-Narsapur-1",
+  "400 KV Shanakrapally-Narsapur-2",
+  "400 KV KethiReddyPally-1",
+  "400 KV KethiReddyPally-2",
+  "400 KV Nizamabad-1&2",
+  "220 KV Parigi-1",
+  "220 KV Parigi-2",
+  "220 KV Tandur",
+  "220 KV Gachibowli-1",
+  "220 KV Gachibowli-2",
+  "220 KV KethiReddyPally",
+  "220 KV Yeddumailaram-1",
+  "220 KV Yeddumailaram-2",
+  "220 KV Sadasivapet-1",
+  "220 KV Sadasivapet-2"
+];
+
 export default function LineLosses() {
   const [feeders, setFeeders] = useState([]);
   const [selectedFeeder, setSelectedFeeder] = useState(null);
@@ -43,11 +63,24 @@ export default function LineLosses() {
     }
   };
 
+  const getSortedFeeders = () => {
+    if (!feeders) return [];
+    return [...feeders].sort((a, b) => {
+      const indexA = FEEDER_ORDER.indexOf(a.name);
+      const indexB = FEEDER_ORDER.indexOf(b.name);
+      if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+      if (indexA !== -1) return -1;
+      if (indexB !== -1) return 1;
+      return a.name.localeCompare(b.name);
+    });
+  };
+
   const handleSubmitDateSelection = () => {
     if (feeders.length > 0) {
-      setSelectedFeeder(feeders[0]);
+      const sorted = getSortedFeeders();
+      setSelectedFeeder(sorted[0]);
       setShowDateSelector(false);
-      fetchEntries(feeders[0].id, year, month);
+      fetchEntries(sorted[0].id, year, month);
     }
   };
 
@@ -221,18 +254,29 @@ export default function LineLosses() {
         </div>
       </div>
 
-      {/* Feeder Tabs */}
-      <div className="feeder-tabs">
-        {feeders.map(feeder => (
-          <button
-            key={feeder.id}
-            onClick={() => handleFeederChange(feeder)}
-            className={`feeder-tab ${selectedFeeder?.id === feeder.id ? 'active' : ''}`}
-            data-testid={`feeder-tab-${feeder.id}`}
-          >
-            {feeder.name}
-          </button>
-        ))}
+      {/* Feeder Selection Dropdown */}
+      <div className="w-full max-w-xl mb-6">
+        <label className="text-sm font-medium mb-2 block text-slate-600 dark:text-slate-400">
+          Select Feeder
+        </label>
+        <Select
+          value={selectedFeeder?.id || ''}
+          onValueChange={(value) => {
+            const feeder = feeders.find(f => f.id === value);
+            if (feeder) handleFeederChange(feeder);
+          }}
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="Select a feeder" />
+          </SelectTrigger>
+          <SelectContent className="max-h-[300px]">
+            {getSortedFeeders().map(feeder => (
+              <SelectItem key={feeder.id} value={feeder.id}>
+                {feeder.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Data Table */}

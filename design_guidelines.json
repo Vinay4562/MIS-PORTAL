@@ -44,9 +44,9 @@
         "usage": "Primary actions, active tabs, key highlights"
       },
       "secondary": {
-        "name": "Volt Yellow",
-        "hex": "#EAB308",
-        "tailwind": "yellow-500",
+        "name": "Royal Purple",
+        "hex": "#A855F7",
+        "tailwind": "purple-500",
         "usage": "Energy accents, focus states"
       },
       "success": {
