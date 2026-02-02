@@ -51,17 +51,17 @@ export default function LoginPage() {
          }}>
       <div className="absolute inset-0 bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm"></div>
       
-      <Card className="w-full max-w-md relative z-10 shadow-xl border-2">
-        <CardHeader className="space-y-3">
+      <Card className="w-full max-w-md relative z-10 shadow-xl border-2 bg-white dark:bg-slate-800">
+        <CardHeader className="space-y-3 bg-white dark:bg-slate-800">
           <div className="flex items-center justify-center mb-2">
             <div className="p-3 bg-blue-600 rounded-lg">
               <Zap className="w-8 h-8 text-white" />
             </div>
           </div>
-          <CardTitle className="text-3xl font-heading text-center">
+          <CardTitle className="text-3xl font-heading text-center text-slate-900 dark:text-slate-100">
             LINE LOSSES MIS PORTAL
           </CardTitle>
-          <CardDescription className="text-center text-base">
+          <CardDescription className="text-center text-base text-slate-600 dark:text-slate-400">
             {isLogin ? 'Sign in to your account' : 'Create a new account'}
           </CardDescription>
         </CardHeader>
