@@ -81,9 +81,12 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, o
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="data-entry-modal">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="data-entry-modal" aria-describedby="entry-form-description">
         <DialogHeader>
           <DialogTitle className="text-2xl font-heading">New Entry - {feeder.name}</DialogTitle>
+          <p id="entry-form-description" className="sr-only">
+            Enter daily readings for {feeder.name}. Initial values are auto-filled from previous day.
+          </p>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-6">
