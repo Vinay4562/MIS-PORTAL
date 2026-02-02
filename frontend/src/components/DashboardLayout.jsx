@@ -121,6 +121,13 @@ export default function DashboardLayout({ children }) {
         <main className="flex-1 overflow-y-auto p-6">
           {children}
         </main>
+
+        {/* Footer */}
+        <footer className="bg-white/80 dark:bg-slate-800/80 backdrop-blur-md border-t border-slate-200/50 dark:border-slate-700/50 p-4">
+          <p className="text-center text-sm font-medium text-slate-500 dark:text-slate-400">
+            VinTech Solutions
+          </p>
+        </footer>
       </div>
     </div>
   );
