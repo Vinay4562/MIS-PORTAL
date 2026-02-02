@@ -1,0 +1,154 @@
+{
+  "identity": {
+    "name": "E1",
+    "role": "Anti-AI Designer",
+    "principles": [
+      "Fusion over Imitation",
+      "Emotion First",
+      "Content is King",
+      "Zoom In",
+      "Negative Space",
+      "Contrast"
+    ]
+  },
+  "project": {
+    "name": "LINE LOSSES – MIS PORTAL",
+    "type": "Enterprise Dashboard",
+    "theme_strategy": "Light Default / Dark Toggle",
+    "emotional_tone": "Precision, Clarity, Industrial Efficiency"
+  },
+  "typography": {
+    "headings": {
+      "font_family": "Barlow Condensed, sans-serif",
+      "weights": ["600", "700"],
+      "usage": "Page titles, Section headers, KPI values",
+      "import_url": "https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    },
+    "body": {
+      "font_family": "Inter, sans-serif",
+      "weights": ["400", "500"],
+      "usage": "UI labels, navigation, general text"
+    },
+    "data": {
+      "font_family": "JetBrains Mono, monospace",
+      "weights": ["400", "500"],
+      "usage": "Table data, numerical values, calculations"
+    }
+  },
+  "colors": {
+    "palette": {
+      "primary": {
+        "name": "Electric Blue",
+        "hex": "#2563EB",
+        "tailwind": "blue-600",
+        "usage": "Primary actions, active tabs, key highlights"
+      },
+      "secondary": {
+        "name": "Volt Yellow",
+        "hex": "#EAB308",
+        "tailwind": "yellow-500",
+        "usage": "Energy accents, focus states"
+      },
+      "success": {
+        "name": "Grid Green",
+        "hex": "#16A34A",
+        "tailwind": "green-600",
+        "usage": "Low loss indicators, positive trends"
+      },
+      "danger": {
+        "name": "Signal Red",
+        "hex": "#DC2626",
+        "tailwind": "red-600",
+        "usage": "High loss alerts, error states"
+      },
+      "background": {
+        "light": "#F8FAFC",
+        "dark": "#0F172A",
+        "paper_light": "#FFFFFF",
+        "paper_dark": "#1E293B"
+      },
+      "text": {
+        "primary_light": "#0F172A",
+        "secondary_light": "#64748B",
+        "primary_dark": "#F8FAFC",
+        "secondary_dark": "#94A3B8"
+      }
+    }
+  },
+  "visual_enhancers": {
+    "borders": "1px solid var(--border)",
+    "radius": "rounded-md",
+    "shadows": {
+      "card": "shadow-sm hover:shadow-md transition-shadow duration-200",
+      "floating": "shadow-lg ring-1 ring-black/5"
+    },
+    "glassmorphism": "bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200/50 dark:border-slate-800/50"
+  },
+  "layout": {
+    "structure": "Sidebar (Left) + Topbar (Header) + Main Content (Scrollable)",
+    "grid_system": "Bento Grid Mode B (High Density)",
+    "spacing": "Generous padding (p-6, p-8) for containers, tight (p-2, p-3) for data tables",
+    "container_width": "max-w-7xl mx-auto"
+  },
+  "components": {
+    "Table": {
+      "style": "Excel-Pro",
+      "features": [
+        "Sticky Header",
+        "Zebra Striping (even:bg-slate-50 dark:even:bg-slate-800/50)",
+        "Monospace Numbers",
+        "Right-aligned numeric columns",
+        "Dense padding (py-2 px-3)"
+      ]
+    },
+    "Card": {
+      "style": "Tech-Surface",
+      "classes": "bg-card text-card-foreground rounded-lg border shadow-sm"
+    },
+    "Button": {
+      "style": "Tactical",
+      "classes": "font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+    },
+    "Input": {
+      "style": "Clean",
+      "classes": "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+    }
+  },
+  "images": {
+    "login_background": {
+      "url": "https://images.unsplash.com/photo-1757866419834-192728bdb138?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDB8MHwxfHNlYXJjaHwyfHxhYnN0cmFjdCUyMGVsZWN0cmljJTIwcG93ZXIlMjBsaW5lcyUyMG1pbmltYWxpc3R8ZW58MHx8fHwxNzcwMDMzNTU4fDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Abstract power lines against sky",
+      "usage": "Full screen background with overlay-90 (dark) or overlay-10 (light)"
+    }
+  },
+  "instructions_to_main_agent": [
+    "1. INSTALL FONTS: Add the Google Fonts import to index.css immediately.",
+    "2. SETUP THEME: Ensure the dark mode toggle works correctly using the 'class' strategy in Tailwind.",
+    "3. BUILD LAYOUT: Create a 'DashboardLayout' component that includes the Sidebar and Header. All dashboard pages must use this.",
+    "4. DATA GRID: When building the Line Losses table, prioritize DENSITY. Do not use comfortable spacing. It must feel like a high-performance tool.",
+    "5. CALCULATIONS: Ensure all frontend calculations happen in real-time as the user types in the modal/grid.",
+    "6. CHARTS: Use Recharts (via Shadcn Charts if available, or raw Recharts) for the Loss Trend and Monthly Summary.",
+    "7. ACCESSIBILITY: Ensure high contrast for all data values. Use the defined colors.",
+    "8. TESTING: Add data-testid to all inputs, buttons, and key table cells."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients",
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through layered design elements with z-index hierarchy",
+    "Use glass-morphism effects with backdrop filters (12-24px blur)",
+    "You MUST NOT apply universal transition. Eg: transition: all. This results in breaking transforms. Always add transitions for specific interactive elements like button, input excluding transforms",
+    "You MUST NOT center align the app container, ie do not add .App { text-align: center; } in the css file. This disrupts the human natural reading flow of text",
+    "Always use modern button styles like pill-shaped, or sharp button with interaction animations & color relevant to the app style",
+    "NEVER: use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯📚🎭🎬🎪🎉🎊🎁🎀🎂🍰🎈🎨🎰💰💵💳🏦💎🪙💸🤑📊📈📉💹🔢🏆🥇 etc for icons.",
+    "Every interaction needs micro-animations - hover states, transitions, parallax effects, and entrance animations. Static = dead.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "Subtle grain textures, noise overlays, custom cursors, selection states, and loading animations: separates good from extraordinary.",
+    "Main agent relies on these image URLs. Missing categories (especially sponsor logos) = main agent will use placeholder text which is FORBIDDEN",
+    "Prioritize using pre-existing components from src/components/ui when applicable",
+    "Create new components that match the style and conventions of existing components when needed",
+    "Examine existing components to understand the project's component patterns before creating new ones",
+    "Components MUST use named exports (export const ComponentName = ...)",
+    "Pages MUST use default exports (export default function PageName() {...})",
+    "Use sonner for toasts. Sonner component are located in /app/src/components/ui/sonner.tsx"
+  ]
+}
