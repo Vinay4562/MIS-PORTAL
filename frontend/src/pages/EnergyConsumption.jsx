@@ -179,30 +179,40 @@ export default function EnergyConsumption() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-heading font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-            <Activity className="w-8 h-8 text-blue-600" />
+          <h1 className="text-2xl md:text-3xl font-heading font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+            <Activity className="w-6 h-6 md:w-8 md:h-8 text-blue-600" />
             Energy Consumption
           </h1>
-          <p className="text-slate-500 dark:text-slate-400 mt-1">
+          <p className="text-sm md:text-base text-slate-500 dark:text-slate-400 mt-1">
             {monthNames[month - 1]} {year}
           </p>
         </div>
         
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 md:gap-3 w-full lg:w-auto">
             <Button 
                 variant="outline" 
                 onClick={() => setShowDateSelector(true)}
+                className="flex-1 lg:flex-none"
             >
                 <Calendar className="w-4 h-4 mr-2" />
-                Change Period
+                Period
             </Button>
-            <Button onClick={() => setIsModalOpen(true)} disabled={!selectedSheet}>
+            <Button 
+                onClick={() => setIsModalOpen(true)} 
+                disabled={!selectedSheet}
+                className="flex-1 lg:flex-none"
+            >
               <Plus className="w-4 h-4 mr-2" />
-              New Entry
+              Entry
             </Button>
-            <Button variant="secondary" onClick={handleExport} disabled={!selectedSheet || entries.length === 0}>
+            <Button 
+                variant="secondary" 
+                onClick={handleExport} 
+                disabled={!selectedSheet || entries.length === 0}
+                className="flex-1 lg:flex-none"
+            >
               <Download className="w-4 h-4 mr-2" />
               Export
             </Button>

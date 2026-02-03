@@ -11,10 +11,10 @@ export default function DashboardHome() {
               <Zap className="w-16 h-16 text-white" />
             </div>
           </div>
-          <h1 className="text-5xl font-heading font-bold mb-4 text-slate-900 dark:text-slate-100">
+          <h1 className="text-3xl md:text-5xl font-heading font-bold mb-4 text-slate-900 dark:text-slate-100">
             Welcome to MIS PORTAL
           </h1>
-          <p className="text-lg text-slate-600 dark:text-slate-400 mb-6">
+          <p className="text-base md:text-lg text-slate-600 dark:text-slate-400 mb-6">
             Your comprehensive Line Losses Management System
           </p>
           <p className="text-sm text-slate-500 dark:text-slate-500">

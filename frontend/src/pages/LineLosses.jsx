@@ -216,37 +216,40 @@ export default function LineLosses() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-heading font-bold text-slate-900 dark:text-slate-100">
+          <h1 className="text-2xl md:text-3xl font-heading font-bold text-slate-900 dark:text-slate-100">
             Line Losses Management
           </h1>
-          <p className="text-slate-600 dark:text-slate-400 mt-1">
+          <p className="text-sm md:text-base text-slate-600 dark:text-slate-400 mt-1">
             {monthNames[month - 1]} {year}
           </p>
         </div>
         
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2 md:gap-3 w-full lg:w-auto">
           <Button 
             variant="outline" 
             onClick={() => setShowDateSelector(true)}
             data-testid="change-period-button"
+            className="flex-1 lg:flex-none"
           >
             <Calendar className="w-4 h-4 mr-2" />
-            Change Period
+            Period
           </Button>
           <Button 
             onClick={() => setIsModalOpen(true)}
             data-testid="new-entry-button"
+            className="flex-1 lg:flex-none"
           >
             <Plus className="w-4 h-4 mr-2" />
-            New Entry
+            Entry
           </Button>
           <Button 
             variant="secondary" 
             onClick={handleExport}
             disabled={!selectedFeeder || entries.length === 0}
             data-testid="export-button"
+            className="flex-1 lg:flex-none"
           >
             <Download className="w-4 h-4 mr-2" />
             Export
