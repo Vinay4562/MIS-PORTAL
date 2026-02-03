@@ -25,6 +25,24 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
 app = FastAPI()
+
+origins = [
+    "http://localhost:3000",
+    "https://mis-portal-liard.vercel.app",
+]
+
+env_origins = os.environ.get('CORS_ORIGINS', '')
+if env_origins:
+    origins.extend(env_origins.split(','))
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 api_router = APIRouter(prefix="/api")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
