@@ -2,7 +2,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
 
@@ -33,13 +33,7 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, onEntryCreate
     }
   }, [isOpen, entry]);
 
-  useEffect(() => {
-    if (date && sheet) {
-        fetchPreviousEntry(date);
-    }
-  }, [date, sheet]);
-
-  const fetchPreviousEntry = async (currentDate) => {
+  const fetchPreviousEntry = useCallback(async (currentDate) => {
     try {
         const dateObj = new Date(currentDate);
         const prevDate = new Date(dateObj);
@@ -54,7 +48,13 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, onEntryCreate
     } catch (error) {
         console.error('Failed to fetch previous entry:', error);
     }
-  };
+  }, [sheet]);
+
+  useEffect(() => {
+    if (date && sheet) {
+        fetchPreviousEntry(date);
+    }
+  }, [date, sheet, fetchPreviousEntry]);
 
   const getInitialValue = (meterId) => {
     // If editing, use the actual initial value from the entry itself if available, 

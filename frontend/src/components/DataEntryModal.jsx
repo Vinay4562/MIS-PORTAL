@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -18,22 +18,7 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, o
   const [previousEntry, setPreviousEntry] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    if (isOpen) {
-      const today = new Date();
-      const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-      setSelectedDate(dateStr);
-      fetchPreviousEntry(dateStr);
-    }
-  }, [isOpen]);
-
-  useEffect(() => {
-    if (selectedDate) {
-      fetchPreviousEntry(selectedDate);
-    }
-  }, [selectedDate]);
-
-  const fetchPreviousEntry = async (date) => {
+  const fetchPreviousEntry = useCallback(async (date) => {
     try {
       const dateObj = new Date(date);
       const prevDate = new Date(dateObj);
@@ -49,7 +34,22 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, o
     } catch (error) {
       console.error('Failed to fetch previous entry:', error);
     }
-  };
+  }, [feeder.id]);
+
+  useEffect(() => {
+    if (isOpen) {
+      const today = new Date();
+      const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      setSelectedDate(dateStr);
+      fetchPreviousEntry(dateStr);
+    }
+  }, [isOpen, fetchPreviousEntry]);
+
+  useEffect(() => {
+    if (selectedDate) {
+      fetchPreviousEntry(selectedDate);
+    }
+  }, [selectedDate, fetchPreviousEntry]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
