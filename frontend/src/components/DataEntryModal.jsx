@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -9,14 +9,31 @@ import { Edit2 } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-export default function DataEntryModal({ isOpen, onClose, feeder, year, month, onEntryCreated }) {
-  const [selectedDate, setSelectedDate] = useState('');
+export default function DataEntryModal({ isOpen, onClose, feeder, year, month, onEntryCreated, onPrevFeeder, onNextFeeder }) {
+  // Calculate date range for the selected period
+  const strMonth = month.toString().padStart(2, '0');
+  const minDate = `${year}-${strMonth}-01`;
+  const maxDay = new Date(year, month, 0).getDate();
+  const maxDate = `${year}-${strMonth}-${maxDay}`;
+
+  const [selectedDate, setSelectedDate] = useState(() => {
+      // If today is within the selected month, use today. Otherwise use first day of month.
+      const today = new Date();
+      const currentYear = today.getFullYear();
+      const currentMonth = today.getMonth() + 1;
+      
+      if (currentYear === year && currentMonth === month) {
+          return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      }
+      return `${year}-${strMonth}-01`;
+  });
   const [end1ImportFinal, setEnd1ImportFinal] = useState('');
   const [end1ExportFinal, setEnd1ExportFinal] = useState('');
   const [end2ImportFinal, setEnd2ImportFinal] = useState('');
   const [end2ExportFinal, setEnd2ExportFinal] = useState('');
   const [previousEntry, setPreviousEntry] = useState(null);
   const [loading, setLoading] = useState(false);
+  const firstInputRef = useRef(null);
 
   const fetchPreviousEntry = useCallback(async (date) => {
     try {
@@ -37,13 +54,19 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, o
   }, [feeder.id]);
 
   useEffect(() => {
-    if (isOpen) {
-      const today = new Date();
-      const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-      setSelectedDate(dateStr);
-      fetchPreviousEntry(dateStr);
+    // Reset form fields when feeder changes
+    setEnd1ImportFinal('');
+    setEnd1ExportFinal('');
+    setEnd2ImportFinal('');
+    setEnd2ExportFinal('');
+    
+    // Focus first input
+    setTimeout(() => firstInputRef.current?.focus(), 0);
+
+    if (selectedDate) {
+      fetchPreviousEntry(selectedDate);
     }
-  }, [isOpen, fetchPreviousEntry]);
+  }, [feeder.id, fetchPreviousEntry, selectedDate]);
 
   useEffect(() => {
     if (selectedDate) {
@@ -66,7 +89,6 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, o
       });
 
       onEntryCreated(response.data);
-      onClose();
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Failed to create entry');
     } finally {
@@ -83,7 +105,21 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, o
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="data-entry-modal" aria-describedby="entry-form-description">
         <DialogHeader>
-          <DialogTitle className="text-2xl font-heading">New Entry - {feeder.name}</DialogTitle>
+          <div className="flex items-center justify-between">
+            <DialogTitle className="text-2xl font-heading">New Entry - {feeder.name}</DialogTitle>
+            <div className="flex gap-2">
+              {onPrevFeeder && (
+                <Button type="button" variant="outline" onClick={onPrevFeeder}>
+                  Previous
+                </Button>
+              )}
+              {onNextFeeder && (
+                <Button type="button" variant="outline" onClick={onNextFeeder}>
+                  Next
+                </Button>
+              )}
+            </div>
+          </div>
           <p id="entry-form-description" className="sr-only">
             Enter daily readings for {feeder.name}. Initial values are auto-filled from previous day.
           </p>
@@ -96,6 +132,8 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, o
               id="date"
               type="date"
               value={selectedDate}
+              min={minDate}
+              max={maxDate}
               onChange={(e) => setSelectedDate(e.target.value)}
               required
               data-testid="date-input"
@@ -125,6 +163,7 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, o
                 <Label htmlFor="end1ImportFinal">Import Final (MWH)</Label>
                 <Input
                   id="end1ImportFinal"
+                  ref={firstInputRef}
                   type="number"
                   step="0.01"
                   value={end1ImportFinal}

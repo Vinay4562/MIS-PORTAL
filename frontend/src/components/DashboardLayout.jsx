@@ -3,7 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/components/ThemeProvider';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { Menu, Zap, LogOut, Sun, Moon, TrendingDown, Activity } from 'lucide-react';
+import { Menu, Zap, LogOut, Sun, Moon, TrendingDown, Activity, Maximize2, BarChart2 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 export default function DashboardLayout({ children }) {
@@ -33,7 +33,7 @@ export default function DashboardLayout({ children }) {
             <h1 className="text-lg font-heading font-bold text-slate-900 dark:text-slate-100">
               MIS PORTAL
             </h1>
-            <p className="text-xs text-slate-500 dark:text-slate-400">Line Losses</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">Dashboard</p>
           </div>
         </div>
       </div>
@@ -44,7 +44,7 @@ export default function DashboardLayout({ children }) {
             navigate('/line-losses');
             setOpen(false);
           }}
-          className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+          className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-left ${
             location.pathname === '/line-losses'
               ? 'bg-blue-600 text-white'
               : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
@@ -60,7 +60,7 @@ export default function DashboardLayout({ children }) {
             navigate('/energy-consumption');
             setOpen(false);
           }}
-          className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+          className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-left ${
             location.pathname === '/energy-consumption'
               ? 'bg-blue-600 text-white'
               : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
@@ -70,6 +70,22 @@ export default function DashboardLayout({ children }) {
           <Activity className="w-5 h-5" />
           <span className="font-medium">ENERGY CONSUMPTION</span>
         </button>
+
+        <button
+          onClick={() => {
+            navigate('/max-min-data');
+            setOpen(false);
+          }}
+          className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-left ${
+            location.pathname === '/max-min-data'
+              ? 'bg-blue-600 text-white'
+              : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+          }`}
+          data-testid="max-min-data-menu"
+        >
+          <BarChart2 className="w-5 h-5" />
+          <span className="font-medium">MAX-MIN DATA</span>
+        </button>
       </nav>
 
       <div className="p-4 border-t border-slate-200 dark:border-slate-700 space-y-2">
@@ -77,14 +93,6 @@ export default function DashboardLayout({ children }) {
           <p className="font-medium truncate">{user?.full_name}</p>
           <p className="text-xs truncate">{user?.email}</p>
         </div>
-        <Button
-          variant="ghost"
-          className="w-full justify-start text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
-          onClick={handleLogout}
-        >
-          <LogOut className="w-4 h-4 mr-2" />
-          Logout
-        </Button>
       </div>
     </div>
   );

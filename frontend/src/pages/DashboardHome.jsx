@@ -15,7 +15,7 @@ export default function DashboardHome() {
             Welcome to MIS PORTAL
           </h1>
           <p className="text-base md:text-lg text-slate-600 dark:text-slate-400 mb-6">
-            Your comprehensive Line Losses Management System
+            Integrated Substation Data Management System
           </p>
           <p className="text-sm text-slate-500 dark:text-slate-500">
             Select "LINE LOSSES" from the sidebar menu to get started

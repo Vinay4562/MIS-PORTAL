@@ -59,7 +59,7 @@ export default function LoginPage() {
             </div>
           </div>
           <CardTitle className="text-3xl font-heading text-center text-slate-900 dark:text-slate-100">
-            LINE LOSSES MIS PORTAL
+            MIS PORTAL
           </CardTitle>
           <CardDescription className="text-center text-base text-slate-600 dark:text-slate-400">
             {isLogin ? 'Sign in to your account' : 'Create a new account'}

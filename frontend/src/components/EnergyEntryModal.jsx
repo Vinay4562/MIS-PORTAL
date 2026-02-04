@@ -2,17 +2,30 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-export default function EnergyEntryModal({ isOpen, onClose, sheet, onEntryCreated, entry = null }) {
-  const [date, setDate] = useState('');
+export default function EnergyEntryModal({ isOpen, onClose, sheet, year, month, onEntryCreated, entry, onPrevSheet, onNextSheet }) {
+  const [date, setDate] = useState(() => {
+      const today = new Date();
+      if (today.getFullYear() === year && (today.getMonth() + 1) === month) {
+          return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      }
+      return `${year}-${String(month).padStart(2, '0')}-01`;
+  });
   const [readings, setReadings] = useState({}); // { meterId: finalValue }
   const [previousEntry, setPreviousEntry] = useState(null);
   const [loading, setLoading] = useState(false);
+  const firstInputRef = useRef(null);
+
+  // Calculate constraints
+  const strMonth = month.toString().padStart(2, '0');
+  const minDate = `${year}-${strMonth}-01`;
+  const maxDay = new Date(year, month, 0).getDate();
+  const maxDate = `${year}-${strMonth}-${maxDay}`;
 
   useEffect(() => {
     if (isOpen) {
@@ -24,14 +37,25 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, onEntryCreate
             });
             setReadings(entryReadings);
         } else {
+            // New entry logic
             const today = new Date();
-            const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-            setDate(dateStr);
+            if (today.getFullYear() === year && (today.getMonth() + 1) === month) {
+                setDate(`${year}-${String(month).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`);
+            } else {
+                setDate(`${year}-${String(month).padStart(2, '0')}-01`);
+            }
             setReadings({});
         }
         setPreviousEntry(null);
     }
-  }, [isOpen, entry]);
+  }, [isOpen, entry, sheet.id, year, month]);
+  
+  // Focus effect on sheet change
+  useEffect(() => {
+      if (!entry) {
+        setTimeout(() => firstInputRef.current?.focus(), 0);
+      }
+  }, [sheet.id, entry]);
 
   const fetchPreviousEntry = useCallback(async (currentDate) => {
     try {
@@ -92,7 +116,6 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, onEntryCreate
         }
         
         onEntryCreated(response.data);
-        onClose();
     } catch (error) {
         toast.error(entry ? 'Failed to update entry' : 'Failed to save entry');
         console.error(error);
@@ -105,7 +128,17 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, onEntryCreate
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{entry ? 'Edit Entry' : 'New Entry'} - {sheet.name}</DialogTitle>
+          <div className="flex items-center justify-between">
+            <DialogTitle>{entry ? 'Edit Entry' : 'New Entry'} - {sheet.name}</DialogTitle>
+            <div className="flex gap-2">
+              {onPrevSheet && (
+                <Button type="button" variant="outline" onClick={onPrevSheet}>Previous</Button>
+              )}
+              {onNextSheet && (
+                <Button type="button" variant="outline" onClick={onNextSheet}>Next</Button>
+              )}
+            </div>
+          </div>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-2">
@@ -113,6 +146,8 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, onEntryCreate
                 <Input 
                     type="date" 
                     value={date} 
+                    min={minDate}
+                    max={maxDate}
                     onChange={e => setDate(e.target.value)} 
                     required 
                     disabled={!!entry} // Disable date editing in edit mode to prevent conflicts
@@ -132,7 +167,7 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, onEntryCreate
                 </div>
 
                 <div className="space-y-4">
-                    {sheet.meters.map(meter => (
+                    {sheet.meters.map((meter, index) => (
                         <div key={meter.id} className="grid grid-cols-12 gap-4 items-center bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg">
                             <div className="col-span-4">
                                 <Label className="truncate block font-medium" title={meter.name}>
@@ -152,6 +187,7 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, onEntryCreate
 
                             <div className="col-span-4">
                                 <Input 
+                                    ref={index === 0 ? firstInputRef : null}
                                     type="number" 
                                     step="0.01" 
                                     placeholder="Final"

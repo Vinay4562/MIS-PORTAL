@@ -1,10 +1,11 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { TrendingDown, TrendingUp, Activity } from 'lucide-react';
+import { formatDate } from '@/lib/utils';
 
 export default function AnalyticsCharts({ entries, feeder }) {
   const chartData = entries.map(entry => ({
-    date: entry.date.split('-')[2],
+    date: formatDate(entry.date),
     lossPercent: parseFloat(entry.loss_percent.toFixed(2)),
     end1Import: entry.end1_import_consumption,
     end1Export: entry.end1_export_consumption,
@@ -88,6 +89,7 @@ export default function AnalyticsCharts({ entries, feeder }) {
                   dataKey="date" 
                   stroke="hsl(var(--foreground))"
                   fontSize={12}
+                  tickFormatter={(val) => val.split('-')[0]}
                 />
                 <YAxis 
                   stroke="hsl(var(--foreground))"
@@ -127,6 +129,7 @@ export default function AnalyticsCharts({ entries, feeder }) {
                   dataKey="date" 
                   stroke="hsl(var(--foreground))"
                   fontSize={12}
+                  tickFormatter={(val) => val.split('-')[0]}
                 />
                 <YAxis 
                   stroke="hsl(var(--foreground))"

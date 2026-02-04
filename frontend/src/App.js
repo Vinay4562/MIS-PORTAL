@@ -6,6 +6,7 @@ import LoginPage from '@/pages/LoginPage';
 import DashboardHome from '@/pages/DashboardHome';
 import LineLosses from '@/pages/LineLosses';
 import EnergyConsumption from '@/pages/EnergyConsumption';
+import MaxMinData from '@/pages/MaxMinData';
 import DashboardLayout from '@/components/DashboardLayout';
 import '@/App.css';
 
@@ -48,6 +49,13 @@ function App() {
               <ProtectedRoute>
                 <DashboardLayout>
                   <EnergyConsumption />
+                </DashboardLayout>
+              </ProtectedRoute>
+            } />
+            <Route path="/max-min-data" element={
+              <ProtectedRoute>
+                <DashboardLayout>
+                  <MaxMinData />
                 </DashboardLayout>
               </ProtectedRoute>
             } />

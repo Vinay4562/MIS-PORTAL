@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import DataEntryModal from '@/components/DataEntryModal';
 import FeederTable from '@/components/FeederTable';
 import AnalyticsCharts from '@/components/AnalyticsCharts';
-import { Download, Plus, Calendar } from 'lucide-react';
+import { Download, Plus, Calendar, RefreshCcw } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -75,6 +75,22 @@ export default function LineLosses() {
     });
   };
 
+  const goToPrevFeeder = () => {
+    const sorted = getSortedFeeders();
+    const idx = sorted.findIndex(f => f.id === selectedFeeder?.id);
+    if (idx > 0) {
+      handleFeederChange(sorted[idx - 1]);
+    }
+  };
+
+  const goToNextFeeder = () => {
+    const sorted = getSortedFeeders();
+    const idx = sorted.findIndex(f => f.id === selectedFeeder?.id);
+    if (idx !== -1 && idx < sorted.length - 1) {
+      handleFeederChange(sorted[idx + 1]);
+    }
+  };
+
   const handleSubmitDateSelection = () => {
     if (feeders.length > 0) {
       const sorted = getSortedFeeders();
@@ -106,8 +122,7 @@ export default function LineLosses() {
 
   const handleEntryCreated = (newEntry) => {
     setEntries([...entries, newEntry].sort((a, b) => a.date.localeCompare(b.date)));
-    toast.success('Entry created successfully');
-    setIsModalOpen(false);
+    toast.success('Data Saved');
   };
 
   const handleEntryUpdated = (updatedEntry) => {
@@ -145,6 +160,12 @@ export default function LineLosses() {
       console.error('Export failed:', error);
       toast.error('Failed to export data');
     }
+  };
+  
+  const handleRefresh = () => {
+    if (!selectedFeeder) return;
+    fetchEntries(selectedFeeder.id, year, month);
+    toast.success('Data refreshed');
   };
 
   const monthNames = [
@@ -229,6 +250,16 @@ export default function LineLosses() {
         <div className="flex flex-wrap items-center gap-2 md:gap-3 w-full lg:w-auto">
           <Button 
             variant="outline" 
+            onClick={handleRefresh}
+            disabled={!selectedFeeder}
+            data-testid="refresh-button"
+            className="flex-1 lg:flex-none"
+          >
+            <RefreshCcw className="w-4 h-4 mr-2" />
+            Refresh
+          </Button>
+          <Button 
+            variant="outline" 
             onClick={() => setShowDateSelector(true)}
             data-testid="change-period-button"
             className="flex-1 lg:flex-none"
@@ -307,6 +338,8 @@ export default function LineLosses() {
           year={year}
           month={month}
           onEntryCreated={handleEntryCreated}
+          onPrevFeeder={goToPrevFeeder}
+          onNextFeeder={goToNextFeeder}
         />
       )}
     </div>

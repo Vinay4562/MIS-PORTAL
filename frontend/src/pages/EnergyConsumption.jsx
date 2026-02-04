@@ -4,9 +4,10 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Download, Plus, Activity, Calendar } from 'lucide-react';
+import { Download, Plus, Activity, Calendar, RefreshCcw } from 'lucide-react';
 import EnergyTable from '@/components/EnergyTable';
 import EnergyEntryModal from '@/components/EnergyEntryModal';
+import EnergyAnalytics from '@/components/EnergyAnalytics';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -72,6 +73,20 @@ export default function EnergyConsumption() {
     fetchEntries(sheet.id, year, month);
   };
 
+  const goToPrevSheet = () => {
+    const idx = sheets.findIndex(s => s.id === selectedSheet?.id);
+    if (idx > 0) {
+      handleSheetChange(sheets[idx - 1]);
+    }
+  };
+
+  const goToNextSheet = () => {
+    const idx = sheets.findIndex(s => s.id === selectedSheet?.id);
+    if (idx !== -1 && idx < sheets.length - 1) {
+      handleSheetChange(sheets[idx + 1]);
+    }
+  };
+
   const handleExport = async () => {
     if (!selectedSheet) return;
     try {
@@ -91,11 +106,18 @@ export default function EnergyConsumption() {
       toast.error('Failed to export data');
     }
   };
+  
+  const handleRefresh = () => {
+    if (!selectedSheet) return;
+    fetchEntries(selectedSheet.id, year, month);
+    toast.success('Data refreshed');
+  };
 
   const handleEntryCreated = (newEntry) => {
     fetchEntries(selectedSheet.id, year, month);
-    toast.success('Entry saved successfully');
+    toast.success('Data Saved');
     setEditingEntry(null);
+    
   };
 
   const handleEdit = (entry) => {
@@ -193,6 +215,16 @@ export default function EnergyConsumption() {
         <div className="flex flex-wrap items-center gap-2 md:gap-3 w-full lg:w-auto">
             <Button 
                 variant="outline" 
+                onClick={handleRefresh}
+                disabled={!selectedSheet}
+                className="flex-1 lg:flex-none"
+                data-testid="refresh-button"
+            >
+                <RefreshCcw className="w-4 h-4 mr-2" />
+                Refresh
+            </Button>
+            <Button 
+                variant="outline" 
                 onClick={() => setShowDateSelector(true)}
                 className="flex-1 lg:flex-none"
             >
@@ -263,9 +295,17 @@ export default function EnergyConsumption() {
                 setEditingEntry(null);
             }}
             sheet={selectedSheet}
+            year={year}
+            month={month}
             onEntryCreated={handleEntryCreated}
             entry={editingEntry}
+            onPrevSheet={goToPrevSheet}
+            onNextSheet={goToNextSheet}
         />
+      )}
+      
+      {selectedSheet && entries.length > 0 && (
+        <EnergyAnalytics entries={entries} sheet={selectedSheet} />
       )}
     </div>
   );
