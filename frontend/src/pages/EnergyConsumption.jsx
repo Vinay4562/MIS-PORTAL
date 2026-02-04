@@ -309,6 +309,7 @@ export default function EnergyConsumption() {
           })()}
           onEntryCreated={handleEntryCreated}
           entry={editingEntry}
+          entries={entries}
           onPrevSheet={goToPrevSheet}
           onNextSheet={goToNextSheet}
         />

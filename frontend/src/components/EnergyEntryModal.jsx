@@ -5,10 +5,11 @@ import { Label } from '@/components/ui/label';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-export default function EnergyEntryModal({ isOpen, onClose, sheet, year, month, defaultDate, onEntryCreated, entry, onPrevSheet, onNextSheet }) {
+export default function EnergyEntryModal({ isOpen, onClose, sheet, year, month, defaultDate, onEntryCreated, entry, entries, onPrevSheet, onNextSheet }) {
   const [date, setDate] = useState(() => {
       // Use defaultDate if provided (calculated by parent based on existing entries)
       if (defaultDate) return defaultDate;
@@ -23,6 +24,7 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, year, month, 
   const [readings, setReadings] = useState({}); // { meterId: finalValue }
   const [previousEntry, setPreviousEntry] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [currentEntry, setCurrentEntry] = useState(entry);
   const firstInputRef = useRef(null);
 
   // Calculate constraints
@@ -35,6 +37,7 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, year, month, 
     if (isOpen) {
         if (entry) {
             setDate(entry.date);
+            setCurrentEntry(entry);
             const entryReadings = {};
             entry.readings.forEach(r => {
                 entryReadings[r.meter_id] = r.final;
@@ -52,18 +55,40 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, year, month, 
                     setDate(`${year}-${String(month).padStart(2, '0')}-01`);
                 }
             }
+            setCurrentEntry(null);
             setReadings({});
         }
         setPreviousEntry(null);
     }
   }, [isOpen, entry, sheet.id, year, month]);
   
+  // Handle date navigation and data loading
+  useEffect(() => {
+      if (isOpen && entries && date) {
+          // Don't overwrite if date matches currentEntry (initial load)
+          if (currentEntry && currentEntry.date === date) return;
+
+          const found = entries.find(e => e.date === date);
+          if (found) {
+              setCurrentEntry(found);
+              const entryReadings = {};
+              found.readings.forEach(r => {
+                  entryReadings[r.meter_id] = r.final;
+              });
+              setReadings(entryReadings);
+          } else {
+              setCurrentEntry(null);
+              setReadings({});
+          }
+      }
+  }, [date, entries, isOpen]); // Removed currentEntry from dependency to avoid loop
+
   // Focus effect on sheet change
   useEffect(() => {
-      if (!entry) {
+      if (!currentEntry) {
         setTimeout(() => firstInputRef.current?.focus(), 0);
       }
-  }, [sheet.id, entry]);
+  }, [sheet.id, currentEntry]);
 
   const fetchPreviousEntry = useCallback(async (currentDate) => {
     try {
@@ -87,6 +112,28 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, year, month, 
         fetchPreviousEntry(date);
     }
   }, [date, sheet, fetchPreviousEntry]);
+
+  const handlePrevDate = () => {
+    const d = new Date(date);
+    d.setDate(d.getDate() - 1);
+    const newDate = d.toISOString().split('T')[0];
+    if (newDate >= minDate) {
+        setDate(newDate);
+    } else {
+        toast.error("Date out of range");
+    }
+  };
+
+  const handleNextDate = () => {
+    const d = new Date(date);
+    d.setDate(d.getDate() + 1);
+    const newDate = d.toISOString().split('T')[0];
+    if (newDate <= maxDate) {
+        setDate(newDate);
+    } else {
+        toast.error("Date out of range");
+    }
+  };
 
   const getInitialValue = (meterId) => {
     // If editing, use the actual initial value from the entry itself if available, 
@@ -117,15 +164,15 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, year, month, 
         };
 
         let response;
-        if (entry) {
-            response = await axios.put(`${API}/energy/entries/${entry.id}`, payload);
+        if (currentEntry) {
+            response = await axios.put(`${API}/energy/entries/${currentEntry.id}`, payload);
         } else {
             response = await axios.post(`${API}/energy/entries`, payload);
         }
         
         onEntryCreated(response.data);
     } catch (error) {
-        toast.error(entry ? 'Failed to update entry' : 'Failed to save entry');
+        toast.error(currentEntry ? 'Failed to update entry' : 'Failed to save entry');
         console.error(error);
     } finally {
         setLoading(false);
@@ -137,13 +184,13 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, year, month, 
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center justify-between">
-            <DialogTitle>{entry ? 'Edit Entry' : 'New Entry'} - {sheet.name}</DialogTitle>
+            <DialogTitle>{currentEntry ? 'Edit Entry' : 'New Entry'} - {sheet.name}</DialogTitle>
             <div className="flex gap-2">
               {onPrevSheet && (
-                <Button type="button" variant="outline" onClick={onPrevSheet}>Previous</Button>
+                <Button type="button" variant="outline" onClick={onPrevSheet}>Previous Sheet</Button>
               )}
               {onNextSheet && (
-                <Button type="button" variant="outline" onClick={onNextSheet}>Next</Button>
+                <Button type="button" variant="outline" onClick={onNextSheet}>Next Sheet</Button>
               )}
             </div>
           </div>
@@ -151,15 +198,23 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, year, month, 
         <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-2">
                 <Label>Date</Label>
-                <Input 
-                    type="date" 
-                    value={date} 
-                    min={minDate}
-                    max={maxDate}
-                    onChange={e => setDate(e.target.value)} 
-                    required 
-                    disabled={!!entry} // Disable date editing in edit mode to prevent conflicts
-                />
+                <div className="flex items-center gap-2">
+                    <Button type="button" variant="outline" size="icon" onClick={handlePrevDate} title="Previous Date">
+                        <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <Input 
+                        type="date" 
+                        value={date} 
+                        min={minDate}
+                        max={maxDate}
+                        onChange={e => setDate(e.target.value)} 
+                        required 
+                        className="flex-1"
+                    />
+                    <Button type="button" variant="outline" size="icon" onClick={handleNextDate} title="Next Date">
+                        <ChevronRight className="h-4 w-4" />
+                    </Button>
+                </div>
             </div>
             
             <div className="space-y-4">

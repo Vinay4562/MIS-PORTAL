@@ -5,11 +5,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { Edit2 } from 'lucide-react';
+import { Edit2, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-export default function DataEntryModal({ isOpen, onClose, feeder, year, month, defaultDate, onEntryCreated, onPrevFeeder, onNextFeeder }) {
+export default function DataEntryModal({ isOpen, onClose, feeder, year, month, defaultDate, onEntryCreated, onEntryUpdated, entries, onPrevFeeder, onNextFeeder }) {
   // Calculate date range for the selected period
   const strMonth = month.toString().padStart(2, '0');
   const minDate = `${year}-${strMonth}-01`;
@@ -36,6 +36,7 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, d
   const [end2ExportFinal, setEnd2ExportFinal] = useState('');
   const [previousEntry, setPreviousEntry] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const firstInputRef = useRef(null);
 
   const fetchPreviousEntry = useCallback(async (date) => {
@@ -57,11 +58,32 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, d
   }, [feeder.id]);
 
   useEffect(() => {
-    // Reset form fields when feeder changes
-    setEnd1ImportFinal('');
-    setEnd1ExportFinal('');
-    setEnd2ImportFinal('');
-    setEnd2ExportFinal('');
+    // Logic to handle date change or feeder change
+    if (selectedDate) {
+        if (entries) {
+            const existing = entries.find(e => e.date === selectedDate);
+            if (existing) {
+                setEditingId(existing.id);
+                setEnd1ImportFinal(existing.end1_import_final);
+                setEnd1ExportFinal(existing.end1_export_final);
+                setEnd2ImportFinal(existing.end2_import_final);
+                setEnd2ExportFinal(existing.end2_export_final);
+            } else {
+                setEditingId(null);
+                setEnd1ImportFinal('');
+                setEnd1ExportFinal('');
+                setEnd2ImportFinal('');
+                setEnd2ExportFinal('');
+            }
+        } else {
+             // Fallback if entries not passed, assume new
+             setEditingId(null);
+             setEnd1ImportFinal('');
+             setEnd1ExportFinal('');
+             setEnd2ImportFinal('');
+             setEnd2ExportFinal('');
+        }
+    }
     
     // Focus first input
     setTimeout(() => firstInputRef.current?.focus(), 0);
@@ -69,31 +91,59 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, d
     if (selectedDate) {
       fetchPreviousEntry(selectedDate);
     }
-  }, [feeder.id, fetchPreviousEntry, selectedDate]);
+  }, [feeder.id, fetchPreviousEntry, selectedDate, entries]);
 
-  useEffect(() => {
-    if (selectedDate) {
-      fetchPreviousEntry(selectedDate);
+  const handlePrevDate = () => {
+    const d = new Date(selectedDate);
+    d.setDate(d.getDate() - 1);
+    const newDate = d.toISOString().split('T')[0];
+    if (newDate >= minDate) {
+        setSelectedDate(newDate);
+    } else {
+        toast.error("Date out of range");
     }
-  }, [selectedDate, fetchPreviousEntry]);
+  };
+
+  const handleNextDate = () => {
+    const d = new Date(selectedDate);
+    d.setDate(d.getDate() + 1);
+    const newDate = d.toISOString().split('T')[0];
+    if (newDate <= maxDate) {
+        setSelectedDate(newDate);
+    } else {
+        toast.error("Date out of range");
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-      const response = await axios.post(`${API}/entries`, {
-        feeder_id: feeder.id,
-        date: selectedDate,
-        end1_import_final: parseFloat(end1ImportFinal),
-        end1_export_final: parseFloat(end1ExportFinal),
-        end2_import_final: parseFloat(end2ImportFinal),
-        end2_export_final: parseFloat(end2ExportFinal)
-      });
-
-      onEntryCreated(response.data);
+      if (editingId) {
+          // Update existing
+          const response = await axios.put(`${API}/entries/${editingId}`, {
+            end1_import_final: parseFloat(end1ImportFinal),
+            end1_export_final: parseFloat(end1ExportFinal),
+            end2_import_final: parseFloat(end2ImportFinal),
+            end2_export_final: parseFloat(end2ExportFinal)
+          });
+          if (onEntryUpdated) onEntryUpdated(response.data);
+          else onEntryCreated(response.data); // Fallback
+      } else {
+          // Create new
+          const response = await axios.post(`${API}/entries`, {
+            feeder_id: feeder.id,
+            date: selectedDate,
+            end1_import_final: parseFloat(end1ImportFinal),
+            end1_export_final: parseFloat(end1ExportFinal),
+            end2_import_final: parseFloat(end2ImportFinal),
+            end2_export_final: parseFloat(end2ExportFinal)
+          });
+          onEntryCreated(response.data);
+      }
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Failed to create entry');
+      toast.error(error.response?.data?.detail || 'Failed to save entry');
     } finally {
       setLoading(false);
     }
@@ -109,16 +159,16 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, d
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" data-testid="data-entry-modal" aria-describedby="entry-form-description">
         <DialogHeader>
           <div className="flex items-center justify-between">
-            <DialogTitle className="text-2xl font-heading">New Entry - {feeder.name}</DialogTitle>
+            <DialogTitle className="text-2xl font-heading">{editingId ? 'Edit Entry' : 'New Entry'} - {feeder.name}</DialogTitle>
             <div className="flex gap-2">
               {onPrevFeeder && (
                 <Button type="button" variant="outline" onClick={onPrevFeeder}>
-                  Previous
+                  Previous Feeder
                 </Button>
               )}
               {onNextFeeder && (
                 <Button type="button" variant="outline" onClick={onNextFeeder}>
-                  Next
+                  Next Feeder
                 </Button>
               )}
             </div>
@@ -131,16 +181,25 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, d
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-2">
             <Label htmlFor="date">Date</Label>
-            <Input
-              id="date"
-              type="date"
-              value={selectedDate}
-              min={minDate}
-              max={maxDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              required
-              data-testid="date-input"
-            />
+            <div className="flex items-center gap-2">
+                <Button type="button" variant="outline" size="icon" onClick={handlePrevDate} title="Previous Date">
+                    <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <Input
+                  id="date"
+                  type="date"
+                  value={selectedDate}
+                  min={minDate}
+                  max={maxDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  required
+                  data-testid="date-input"
+                  className="flex-1"
+                />
+                <Button type="button" variant="outline" size="icon" onClick={handleNextDate} title="Next Date">
+                    <ChevronRight className="h-4 w-4" />
+                </Button>
+            </div>
           </div>
 
           {/* End 1 */}
@@ -277,7 +336,7 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, d
               Cancel
             </Button>
             <Button type="submit" disabled={loading} data-testid="save-entry-button">
-              {loading ? 'Saving...' : 'Save Entry'}
+              {loading ? 'Saving...' : (editingId ? 'Update Entry' : 'Save Entry')}
             </Button>
           </div>
         </form>

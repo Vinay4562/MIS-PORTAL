@@ -184,10 +184,6 @@ export default function MaxMinData() {
     }
 
     // For Bus Station, handle Station Load if needed.
-    // However, if the user doesn't enter it manually, we might want to calculate it.
-    // But since the Modal doesn't have fields for it (unless added), we rely on `getStationLoad`.
-    // The previous implementation saved calculated station load. 
-    // If we want to persist it, we should do it here.
     if (selectedFeeder.type === 'bus_station') {
         const calculatedLoad = getStationLoad(entryData.date);
         if (calculatedLoad) {
@@ -200,23 +196,36 @@ export default function MaxMinData() {
     }
 
     try {
-      const response = await axios.post(`${API}/max-min/entries`, {
-        feeder_id: selectedFeeder.id,
-        date: entryData.date,
-        data: dataToSave
-      });
+      // Check if entry exists for this date
+      const existingEntry = entries.find(e => e.date === entryData.date);
+      let response;
+      
+      if (existingEntry) {
+          response = await axios.put(`${API}/max-min/entries/${existingEntry.id}`, {
+            feeder_id: selectedFeeder.id,
+            date: entryData.date,
+            data: dataToSave
+          });
+          toast.success('Data Updated');
+      } else {
+          response = await axios.post(`${API}/max-min/entries`, {
+            feeder_id: selectedFeeder.id,
+            date: entryData.date,
+            data: dataToSave
+          });
+          toast.success('Data Saved');
+      }
       
       // Update local state
       const existingIndex = entries.findIndex(e => e.date === entryData.date);
       let newEntries;
       if (existingIndex !== -1) {
         newEntries = [...entries];
-        newEntries[existingIndex] = response.data; // Use returned data which includes ID
+        newEntries[existingIndex] = response.data;
       } else {
         newEntries = [...entries, response.data];
       }
       setEntries(newEntries.sort((a, b) => a.date.localeCompare(b.date)));
-      toast.success('Data Saved');
       setEditingEntry(null);
     } catch (error) {
       console.error('Failed to save entry:', error);
@@ -618,6 +627,7 @@ export default function MaxMinData() {
             feeder={selectedFeeder}
             year={year}
             month={month}
+            entries={entries}
             initialData={editingEntry}
             defaultDate={(() => {
               if (entries.length === 0) {

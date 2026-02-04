@@ -347,6 +347,8 @@ export default function LineLosses() {
             return lastDate.toISOString().split('T')[0];
           })()}
           onEntryCreated={handleEntryCreated}
+          onEntryUpdated={handleEntryUpdated}
+          entries={entries}
           onPrevFeeder={goToPrevFeeder}
           onNextFeeder={goToNextFeeder}
         />
