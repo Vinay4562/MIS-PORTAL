@@ -60,7 +60,7 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, year, month, 
         }
         setPreviousEntry(null);
     }
-  }, [isOpen, entry, sheet.id, year, month]);
+  }, [isOpen, entry, sheet.id, year, month, defaultDate]);
   
   // Handle date navigation and data loading
   useEffect(() => {
@@ -81,7 +81,7 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, year, month, 
               setReadings({});
           }
       }
-  }, [date, entries, isOpen]); // Removed currentEntry from dependency to avoid loop
+  }, [date, entries, isOpen, currentEntry]);
 
   // Focus effect on sheet change
   useEffect(() => {
