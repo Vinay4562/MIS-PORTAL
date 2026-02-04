@@ -287,20 +287,30 @@ export default function EnergyConsumption() {
         />
       )}
 
-      {selectedSheet && (
+      {/* Data Entry Modal */}
+      {isModalOpen && selectedSheet && (
         <EnergyEntryModal
-            isOpen={isModalOpen}
-            onClose={() => {
-                setIsModalOpen(false);
-                setEditingEntry(null);
-            }}
-            sheet={selectedSheet}
-            year={year}
-            month={month}
-            onEntryCreated={handleEntryCreated}
-            entry={editingEntry}
-            onPrevSheet={goToPrevSheet}
-            onNextSheet={goToNextSheet}
+          isOpen={isModalOpen}
+          onClose={() => {
+            setIsModalOpen(false);
+            setEditingEntry(null);
+          }}
+          sheet={selectedSheet}
+          year={year}
+          month={month}
+          defaultDate={(() => {
+            if (entries.length === 0) {
+              return `${year}-${String(month).padStart(2, '0')}-01`;
+            }
+            const sorted = [...entries].sort((a, b) => a.date.localeCompare(b.date));
+            const lastDate = new Date(sorted[sorted.length - 1].date);
+            lastDate.setDate(lastDate.getDate() + 1);
+            return lastDate.toISOString().split('T')[0];
+          })()}
+          onEntryCreated={handleEntryCreated}
+          entry={editingEntry}
+          onPrevSheet={goToPrevSheet}
+          onNextSheet={goToNextSheet}
         />
       )}
       

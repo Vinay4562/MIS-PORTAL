@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from 'sonner';
 import { Edit, Calendar, Ban } from 'lucide-react';
 
-export default function MaxMinEntryModal({ isOpen, onClose, onSave, feeder, year, month, initialData, onPrevFeeder, onNextFeeder }) {
+export default function MaxMinEntryModal({ isOpen, onClose, onSave, feeder, year, month, initialData, defaultDate, onPrevFeeder, onNextFeeder }) {
   const [formData, setFormData] = useState({});
   const [selectedDate, setSelectedDate] = useState('');
   const [loading, setLoading] = useState(false);
@@ -19,14 +19,26 @@ export default function MaxMinEntryModal({ isOpen, onClose, onSave, feeder, year
         setSelectedDate(initialData.date);
       } else {
         setFormData({});
-        // Preserve selectedDate if already set (for consecutive entries)
-        // If not set, user must pick date.
+        // Use defaultDate if provided
+        if (defaultDate) {
+            setSelectedDate(defaultDate);
+        } else {
+             // Fallback logic if needed, or leave empty to force user selection
+             // But existing logic was "Preserve selectedDate if already set".
+             // We can respect that if defaultDate is NOT provided.
+             // But if defaultDate IS provided (which it is now), we overwrite.
+             // Actually, if we are opening "New Entry", we probably want the auto-date.
+             if (!selectedDate) {
+                 // Initialize if empty
+                 // const today = ...
+             }
+        }
       }
       
       // Focus first input
       setTimeout(() => firstInputRef.current?.focus(), 0);
     }
-  }, [isOpen, initialData, feeder?.id]);
+  }, [isOpen, initialData, feeder?.id, defaultDate]);
 
   const handleChange = (path, value) => {
     setFormData(prev => {

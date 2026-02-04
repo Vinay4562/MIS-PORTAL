@@ -619,6 +619,15 @@ export default function MaxMinData() {
             year={year}
             month={month}
             initialData={editingEntry}
+            defaultDate={(() => {
+              if (entries.length === 0) {
+                return `${year}-${String(month).padStart(2, '0')}-01`;
+              }
+              const sorted = [...entries].sort((a, b) => a.date.localeCompare(b.date));
+              const lastDate = new Date(sorted[sorted.length - 1].date);
+              lastDate.setDate(lastDate.getDate() + 1);
+              return lastDate.toISOString().split('T')[0];
+            })()}
             onPrevFeeder={goToPrevFeeder}
             onNextFeeder={goToNextFeeder}
         />

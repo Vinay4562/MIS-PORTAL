@@ -8,8 +8,12 @@ import { toast } from 'sonner';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-export default function EnergyEntryModal({ isOpen, onClose, sheet, year, month, onEntryCreated, entry, onPrevSheet, onNextSheet }) {
+export default function EnergyEntryModal({ isOpen, onClose, sheet, year, month, defaultDate, onEntryCreated, entry, onPrevSheet, onNextSheet }) {
   const [date, setDate] = useState(() => {
+      // Use defaultDate if provided (calculated by parent based on existing entries)
+      if (defaultDate) return defaultDate;
+
+      // Fallback logic
       const today = new Date();
       if (today.getFullYear() === year && (today.getMonth() + 1) === month) {
           return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
@@ -38,11 +42,15 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, year, month, 
             setReadings(entryReadings);
         } else {
             // New entry logic
-            const today = new Date();
-            if (today.getFullYear() === year && (today.getMonth() + 1) === month) {
-                setDate(`${year}-${String(month).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`);
+            if (defaultDate) {
+                setDate(defaultDate);
             } else {
-                setDate(`${year}-${String(month).padStart(2, '0')}-01`);
+                const today = new Date();
+                if (today.getFullYear() === year && (today.getMonth() + 1) === month) {
+                    setDate(`${year}-${String(month).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`);
+                } else {
+                    setDate(`${year}-${String(month).padStart(2, '0')}-01`);
+                }
             }
             setReadings({});
         }

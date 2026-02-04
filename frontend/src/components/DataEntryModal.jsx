@@ -9,7 +9,7 @@ import { Edit2 } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-export default function DataEntryModal({ isOpen, onClose, feeder, year, month, onEntryCreated, onPrevFeeder, onNextFeeder }) {
+export default function DataEntryModal({ isOpen, onClose, feeder, year, month, defaultDate, onEntryCreated, onPrevFeeder, onNextFeeder }) {
   // Calculate date range for the selected period
   const strMonth = month.toString().padStart(2, '0');
   const minDate = `${year}-${strMonth}-01`;
@@ -17,7 +17,10 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, o
   const maxDate = `${year}-${strMonth}-${maxDay}`;
 
   const [selectedDate, setSelectedDate] = useState(() => {
-      // If today is within the selected month, use today. Otherwise use first day of month.
+      // Use defaultDate if provided (calculated by parent based on existing entries)
+      if (defaultDate) return defaultDate;
+
+      // Fallback logic
       const today = new Date();
       const currentYear = today.getFullYear();
       const currentMonth = today.getMonth() + 1;
