@@ -251,6 +251,32 @@ class LineLosMISAPITester:
         )
         return success
 
+    def test_export_all_line_losses(self):
+        """Test Export All Line Losses functionality"""
+        current_year = datetime.now().year
+        current_month = datetime.now().month
+        
+        success, response = self.run_test(
+            "Export All Line Losses",
+            "GET",
+            f"line-losses/export-all/{current_year}/{current_month}",
+            200
+        )
+        return success
+
+    def test_export_all_energy(self):
+        """Test Export All Energy Consumption functionality"""
+        current_year = datetime.now().year
+        current_month = datetime.now().month
+        
+        success, response = self.run_test(
+            "Export All Energy Sheets",
+            "GET",
+            f"energy/export-all/{current_year}/{current_month}",
+            200
+        )
+        return success
+
     def test_delete_entry(self):
         """Test deleting an entry"""
         if not self.entry_id:
@@ -314,6 +340,12 @@ def main():
 
         if not tester.test_export_data():
             print("❌ Export data failed")
+
+        if not tester.test_export_all_line_losses():
+            print("❌ Export all line losses failed")
+
+        if not tester.test_export_all_energy():
+            print("❌ Export all energy failed")
 
         if not tester.test_delete_entry():
             print("❌ Delete entry failed")

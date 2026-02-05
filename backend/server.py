@@ -391,7 +391,7 @@ async def preview_max_min_import(
     ws = wb.active
     headers = [str(ws.cell(row=1, column=col).value or "").strip() for col in range(1, ws.max_column + 1)]
     def tokens(h):
-        return h.lower().replace("_", " ").replace("-", " ").replace(".", " ").split()
+        return h.lower().replace("_", " ").replace("-", " ").replace(".", " ").replace("(", " ").replace(")", " ").split()
     def find_col(required):
         for idx, h in enumerate(headers):
             t = tokens(h)
@@ -448,12 +448,39 @@ async def preview_max_min_import(
             min_time = gets(min_time_col)
             
             station_time = gets(load_time_col)
+            station_max_mw = getf(load_max_mw_col)
+            station_mvar = getf(load_mvar_col)
+            
             if ict_ids:
                 ict_entries = await db.max_min_entries.find(
                     {"feeder_id": {"$in": ict_ids}, "date": date_str},
-                    {"data.max.time": 1}
+                    {"data.max": 1}
                 ).to_list(None)
-                times = [e.get('data', {}).get('max', {}).get('time') for e in ict_entries]
+                
+                times = []
+                total_mw = 0.0
+                total_mvar = 0.0
+                has_ict_data = False
+                
+                for e in ict_entries:
+                    d = e.get('data', {}).get('max', {})
+                    t = d.get('time')
+                    mw = d.get('mw')
+                    mvar = d.get('mvar')
+                    
+                    if t: times.append(t)
+                    if mw is not None: 
+                        try: total_mw += float(mw)
+                        except: pass
+                        has_ict_data = True
+                    if mvar is not None:
+                        try: total_mvar += float(mvar)
+                        except: pass
+                
+                if has_ict_data:
+                    station_max_mw = total_mw
+                    station_mvar = total_mvar
+                
                 times = [t for t in times if t]
                 if times:
                     from collections import Counter
@@ -464,7 +491,7 @@ async def preview_max_min_import(
                 "max_bus_voltage_220kv": {"value": getf(v220_max_col), "time": max_time},
                 "min_bus_voltage_400kv": {"value": getf(v400_min_col), "time": min_time},
                 "min_bus_voltage_220kv": {"value": getf(v220_min_col), "time": min_time},
-                "station_load": {"max_mw": getf(load_max_mw_col), "mvar": getf(load_mvar_col), "time": station_time}
+                "station_load": {"max_mw": station_max_mw, "mvar": station_mvar, "time": station_time}
             }
             if all(
                 x is None for x in [
@@ -581,6 +608,14 @@ async def import_max_min_entries(payload: MaxMinImportPayload, current_user: Use
         date_str = e['date']
         existing = await db.max_min_entries.find_one({"feeder_id": feeder_id, "date": date_str})
         if existing:
+            await db.max_min_entries.update_one(
+                {"_id": existing["_id"]},
+                {"$set": {
+                    "data": e.get("data", {}),
+                    "updated_at": datetime.now(timezone.utc).isoformat()
+                }}
+            )
+            imported += 1
             continue
         entry_obj = MaxMinEntry(feeder_id=feeder_id, date=date_str, data=e.get("data", {}))
         doc = entry_obj.model_dump()
@@ -665,6 +700,198 @@ async def delete_entry(entry_id: str, current_user: User = Depends(get_current_u
         raise HTTPException(status_code=404, detail="Entry not found")
     return {"message": "Entry deleted successfully"}
 
+# Helper to parse float safely
+def get_float(val):
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return None
+
+# Helper to calculate stats for a period
+def calculate_period_stats(period_entries, feeder_type):
+    stats = {}
+    
+    if feeder_type == 'bus_station':
+        # Initialize stats with defaults
+        stats = {
+            'max_400kv': -float('inf'), 'max_400kv_date': '-', 'max_400kv_time': '-',
+            'min_400kv': float('inf'), 'min_400kv_date': '-', 'min_400kv_time': '-',
+            'max_220kv': -float('inf'), 'max_220kv_date': '-', 'max_220kv_time': '-',
+            'min_220kv': float('inf'), 'min_220kv_date': '-', 'min_220kv_time': '-',
+            'max_load': -float('inf'), 'max_load_date': '-', 'max_load_time': '-', 'max_load_mvar': '-'
+        }
+
+        # 1. Find Max/Min Values
+        for e in period_entries:
+            d = e.get('data', {})
+            
+            # 400KV
+            v = get_float(d.get('max_bus_voltage_400kv', {}).get('value'))
+            if v is not None and v > stats['max_400kv']: stats['max_400kv'] = v
+            v = get_float(d.get('min_bus_voltage_400kv', {}).get('value'))
+            if v is not None and v < stats['min_400kv']: stats['min_400kv'] = v
+            
+            # 220KV
+            v = get_float(d.get('max_bus_voltage_220kv', {}).get('value'))
+            if v is not None and v > stats['max_220kv']: stats['max_220kv'] = v
+            v = get_float(d.get('min_bus_voltage_220kv', {}).get('value'))
+            if v is not None and v < stats['min_220kv']: stats['min_220kv'] = v
+
+            # Load (Independent)
+            v = get_float(d.get('station_load', {}).get('max_mw'))
+            if v is not None and v > stats['max_load']:
+                stats['max_load'] = v
+                stats['max_load_date'] = e['date']
+                stats['max_load_time'] = d.get('station_load', {}).get('time', '-')
+                stats['max_load_mvar'] = d.get('station_load', {}).get('mvar', '-')
+
+        # 2. Collect Candidates
+        cands_max_400 = []
+        cands_min_400 = []
+        cands_max_220 = []
+        cands_min_220 = []
+
+        for e in period_entries:
+            d = e.get('data', {})
+            date = e['date']
+            
+            # Max 400
+            v = get_float(d.get('max_bus_voltage_400kv', {}).get('value'))
+            if v == stats['max_400kv'] and v is not None:
+                cands_max_400.append({'date': date, 'time': str(d.get('max_bus_voltage_400kv', {}).get('time', '')).strip()})
+            
+            # Min 400
+            v = get_float(d.get('min_bus_voltage_400kv', {}).get('value'))
+            if v == stats['min_400kv'] and v is not None:
+                cands_min_400.append({'date': date, 'time': str(d.get('min_bus_voltage_400kv', {}).get('time', '')).strip()})
+            
+            # Max 220
+            v = get_float(d.get('max_bus_voltage_220kv', {}).get('value'))
+            if v == stats['max_220kv'] and v is not None:
+                cands_max_220.append({'date': date, 'time': str(d.get('max_bus_voltage_220kv', {}).get('time', '')).strip()})
+            
+            # Min 220
+            v = get_float(d.get('min_bus_voltage_220kv', {}).get('value'))
+            if v == stats['min_220kv'] and v is not None:
+                cands_min_220.append({'date': date, 'time': str(d.get('min_bus_voltage_220kv', {}).get('time', '')).strip()})
+
+        # 3. Find Best Matches (Common Time Priority)
+        def find_best(list_a, list_b):
+            # Try to find intersection
+            for a in list_a:
+                for b in list_b:
+                    if a['date'] == b['date'] and a['time'] == b['time']:
+                        return a, b
+            # No intersection, return first available
+            res_a = list_a[0] if list_a else {'date': '-', 'time': '-'}
+            res_b = list_b[0] if list_b else {'date': '-', 'time': '-'}
+            return res_a, res_b
+
+        final_max_400, final_max_220 = find_best(cands_max_400, cands_max_220)
+        final_min_400, final_min_220 = find_best(cands_min_400, cands_min_220)
+
+        stats['max_400kv_date'] = final_max_400['date']
+        stats['max_400kv_time'] = final_max_400['time']
+        stats['max_220kv_date'] = final_max_220['date']
+        stats['max_220kv_time'] = final_max_220['time']
+
+        stats['min_400kv_date'] = final_min_400['date']
+        stats['min_400kv_time'] = final_min_400['time']
+        stats['min_220kv_date'] = final_min_220['date']
+        stats['min_220kv_time'] = final_min_220['time']
+        
+        # Cleanup infinities
+        if stats['max_400kv'] == -float('inf'): stats['max_400kv'] = '-'
+        if stats['min_400kv'] == float('inf'): stats['min_400kv'] = '-'
+        if stats['max_220kv'] == -float('inf'): stats['max_220kv'] = '-'
+        if stats['min_220kv'] == float('inf'): stats['min_220kv'] = '-'
+        if stats['max_load'] == -float('inf'): stats['max_load'] = '-'
+        
+    else:
+        # Feeder / ICT
+        # Initialize stats
+        stats['max_amps'] = -float('inf'); stats['max_amps_date'] = '-'; stats['max_amps_time'] = '-'
+        stats['min_amps'] = float('inf'); stats['min_amps_date'] = '-'; stats['min_amps_time'] = '-'
+        stats['max_mw'] = -float('inf'); stats['max_mw_date'] = '-'; stats['max_mw_time'] = '-'
+        stats['min_mw'] = float('inf'); stats['min_mw_date'] = '-'; stats['min_mw_time'] = '-'
+        
+        total_amps = 0; count_amps = 0
+        total_mw = 0; count_mw = 0
+        
+        max_mw_entry = None
+        min_mw_entry = None
+        
+        for e in period_entries:
+            d = e.get('data', {})
+            date = e['date']
+            
+            # Collect Averages (Amps)
+            max_amps = get_float(d.get('max', {}).get('amps'))
+            min_amps = get_float(d.get('min', {}).get('amps'))
+            avg_amps = get_float(d.get('avg', {}).get('amps'))
+            
+            # Auto-calc avg if missing
+            if avg_amps is None and max_amps is not None and min_amps is not None:
+                avg_amps = (max_amps + min_amps) / 2
+            
+            if avg_amps is not None:
+                total_amps += avg_amps
+                count_amps += 1
+                
+            # Collect Averages (MW) and Find Max/Min MW
+            max_mw = get_float(d.get('max', {}).get('mw'))
+            min_mw = get_float(d.get('min', {}).get('mw'))
+            avg_mw = get_float(d.get('avg', {}).get('mw'))
+            
+            # Auto-calc avg if missing
+            if avg_mw is None and max_mw is not None and min_mw is not None:
+                avg_mw = (max_mw + min_mw) / 2
+                
+            if avg_mw is not None:
+                total_mw += avg_mw
+                count_mw += 1
+            
+            # Find Max MW Entry
+            if max_mw is not None and max_mw > stats['max_mw']:
+                stats['max_mw'] = max_mw
+                max_mw_entry = e
+            
+            # Find Min MW Entry
+            if min_mw is not None and min_mw < stats['min_mw']:
+                stats['min_mw'] = min_mw
+                min_mw_entry = e
+        
+        # Apply Max MW Logic: Get corresponding Amps/Time from Max MW entry
+        if max_mw_entry:
+            d = max_mw_entry.get('data', {})
+            stats['max_mw_date'] = max_mw_entry['date']
+            stats['max_mw_time'] = d.get('max', {}).get('time', '-')
+            
+            stats['max_amps'] = get_float(d.get('max', {}).get('amps'))
+            stats['max_amps_date'] = max_mw_entry['date']
+            stats['max_amps_time'] = d.get('max', {}).get('time', '-')
+        
+        # Apply Min MW Logic: Get corresponding Amps/Time from Min MW entry
+        if min_mw_entry:
+            d = min_mw_entry.get('data', {})
+            stats['min_mw_date'] = min_mw_entry['date']
+            stats['min_mw_time'] = d.get('min', {}).get('time', '-')
+            
+            stats['min_amps'] = get_float(d.get('min', {}).get('amps'))
+            stats['min_amps_date'] = min_mw_entry['date']
+            stats['min_amps_time'] = d.get('min', {}).get('time', '-')
+        
+        # Cleanup and averages
+        if stats['max_amps'] is None or stats['max_amps'] == -float('inf'): stats['max_amps'] = '-'
+        if stats['min_amps'] is None or stats['min_amps'] == float('inf'): stats['min_amps'] = '-'
+        stats['avg_amps'] = round(total_amps / count_amps, 2) if count_amps > 0 else '-'
+        
+        if stats['max_mw'] == -float('inf'): stats['max_mw'] = '-'
+        if stats['min_mw'] == float('inf'): stats['min_mw'] = '-'
+        stats['avg_mw'] = round(total_mw / count_mw, 2) if count_mw > 0 else '-'
+        
+    return stats
+
 @api_router.get("/export/{feeder_id}/{year}/{month}")
 async def export_feeder_data(feeder_id: str, year: int, month: int, current_user: User = Depends(get_current_user)):
     feeder = await db.feeders.find_one({"id": feeder_id}, {"_id": 0})
@@ -714,7 +941,7 @@ async def export_feeder_data(feeder_id: str, year: int, month: int, current_user
     for cell in ws[1]:
         cell.fill = header_fill
         cell.font = header_font
-        cell.alignment = Alignment(horizontal="center")
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
     
     for entry in entries:
         ws.append([
@@ -1350,61 +1577,92 @@ async def export_max_min_data(
         stats = {}
         
         if feeder_type == 'bus_station':
-            # Initialize
-            stats['max_400kv'] = -float('inf')
-            stats['max_400kv_date'] = '-'
-            stats['max_400kv_time'] = '-'
-            stats['min_400kv'] = float('inf')
-            stats['min_400kv_date'] = '-'
-            stats['min_400kv_time'] = '-'
-            
-            stats['max_220kv'] = -float('inf')
-            stats['max_220kv_date'] = '-'
-            stats['max_220kv_time'] = '-'
-            stats['min_220kv'] = float('inf')
-            stats['min_220kv_date'] = '-'
-            stats['min_220kv_time'] = '-'
-            
-            stats['max_load'] = -float('inf')
-            stats['max_load_date'] = '-'
-            stats['max_load_time'] = '-'
-            
+            # Initialize stats with defaults
+            stats = {
+                'max_400kv': -float('inf'), 'max_400kv_date': '-', 'max_400kv_time': '-',
+                'min_400kv': float('inf'), 'min_400kv_date': '-', 'min_400kv_time': '-',
+                'max_220kv': -float('inf'), 'max_220kv_date': '-', 'max_220kv_time': '-',
+                'min_220kv': float('inf'), 'min_220kv_date': '-', 'min_220kv_time': '-',
+                'max_load': -float('inf'), 'max_load_date': '-', 'max_load_time': '-'
+            }
+
+            # 1. Find Max/Min Values
+            for e in period_entries:
+                d = e.get('data', {})
+                
+                # 400KV
+                v = get_float(d.get('max_bus_voltage_400kv', {}).get('value'))
+                if v is not None and v > stats['max_400kv']: stats['max_400kv'] = v
+                v = get_float(d.get('min_bus_voltage_400kv', {}).get('value'))
+                if v is not None and v < stats['min_400kv']: stats['min_400kv'] = v
+                
+                # 220KV
+                v = get_float(d.get('max_bus_voltage_220kv', {}).get('value'))
+                if v is not None and v > stats['max_220kv']: stats['max_220kv'] = v
+                v = get_float(d.get('min_bus_voltage_220kv', {}).get('value'))
+                if v is not None and v < stats['min_220kv']: stats['min_220kv'] = v
+
+                # Load (Independent)
+                v = get_float(d.get('station_load', {}).get('max_mw'))
+                if v is not None and v > stats['max_load']:
+                    stats['max_load'] = v
+                    stats['max_load_date'] = e['date']
+                    stats['max_load_time'] = d.get('station_load', {}).get('time', '-')
+
+            # 2. Collect Candidates
+            cands_max_400 = []
+            cands_min_400 = []
+            cands_max_220 = []
+            cands_min_220 = []
+
             for e in period_entries:
                 d = e.get('data', {})
                 date = e['date']
                 
-                # 400KV
+                # Max 400
                 v = get_float(d.get('max_bus_voltage_400kv', {}).get('value'))
-                if v is not None and v > stats['max_400kv']:
-                    stats['max_400kv'] = v
-                    stats['max_400kv_date'] = date
-                    stats['max_400kv_time'] = d.get('max_bus_voltage_400kv', {}).get('time', '-')
+                if v == stats['max_400kv'] and v is not None:
+                    cands_max_400.append({'date': date, 'time': str(d.get('max_bus_voltage_400kv', {}).get('time', '')).strip()})
                 
+                # Min 400
                 v = get_float(d.get('min_bus_voltage_400kv', {}).get('value'))
-                if v is not None and v < stats['min_400kv']:
-                    stats['min_400kv'] = v
-                    stats['min_400kv_date'] = date
-                    stats['min_400kv_time'] = d.get('min_bus_voltage_400kv', {}).get('time', '-')
-                    
-                # 220KV
-                v = get_float(d.get('max_bus_voltage_220kv', {}).get('value'))
-                if v is not None and v > stats['max_220kv']:
-                    stats['max_220kv'] = v
-                    stats['max_220kv_date'] = date
-                    stats['max_220kv_time'] = d.get('max_bus_voltage_220kv', {}).get('time', '-')
+                if v == stats['min_400kv'] and v is not None:
+                    cands_min_400.append({'date': date, 'time': str(d.get('min_bus_voltage_400kv', {}).get('time', '')).strip()})
                 
+                # Max 220
+                v = get_float(d.get('max_bus_voltage_220kv', {}).get('value'))
+                if v == stats['max_220kv'] and v is not None:
+                    cands_max_220.append({'date': date, 'time': str(d.get('max_bus_voltage_220kv', {}).get('time', '')).strip()})
+                
+                # Min 220
                 v = get_float(d.get('min_bus_voltage_220kv', {}).get('value'))
-                if v is not None and v < stats['min_220kv']:
-                    stats['min_220kv'] = v
-                    stats['min_220kv_date'] = date
-                    stats['min_220kv_time'] = d.get('min_bus_voltage_220kv', {}).get('time', '-')
-                    
-                # Load
-                v = get_float(d.get('station_load', {}).get('max_mw'))
-                if v is not None and v > stats['max_load']:
-                    stats['max_load'] = v
-                    stats['max_load_date'] = date
-                    stats['max_load_time'] = d.get('station_load', {}).get('time', '-')
+                if v == stats['min_220kv'] and v is not None:
+                    cands_min_220.append({'date': date, 'time': str(d.get('min_bus_voltage_220kv', {}).get('time', '')).strip()})
+
+            # 3. Find Best Matches (Common Time Priority)
+            def find_best(list_a, list_b):
+                # Try to find intersection
+                for a in list_a:
+                    for b in list_b:
+                        if a['date'] == b['date'] and a['time'] == b['time']:
+                            return a, b
+                # No intersection, return first available
+                res_a = list_a[0] if list_a else {'date': '-', 'time': '-'}
+                res_b = list_b[0] if list_b else {'date': '-', 'time': '-'}
+                return res_a, res_b
+
+            final_max_400, final_max_220 = find_best(cands_max_400, cands_max_220)
+            final_min_400, final_min_220 = find_best(cands_min_400, cands_min_220)
+
+            stats['max_400kv_date'] = final_max_400['date']
+            stats['max_400kv_time'] = final_max_400['time']
+            stats['max_220kv_date'] = final_max_220['date']
+            stats['max_220kv_time'] = final_max_220['time']
+
+            stats['min_400kv_date'] = final_min_400['date']
+            stats['min_400kv_time'] = final_min_400['time']
+            stats['min_220kv_date'] = final_min_220['date']
+            stats['min_220kv_time'] = final_min_220['time']
             
             # Cleanup infinities
             if stats['max_400kv'] == -float('inf'): stats['max_400kv'] = '-'
@@ -1415,81 +1673,81 @@ async def export_max_min_data(
             
         else:
             # Feeder / ICT
-            # Amps
-            stats['max_amps'] = -float('inf')
-            stats['max_amps_date'] = '-'
-            stats['max_amps_time'] = '-'
-            stats['min_amps'] = float('inf')
-            stats['min_amps_date'] = '-'
-            stats['min_amps_time'] = '-'
+            # Initialize stats
+            stats['max_amps'] = -float('inf'); stats['max_amps_date'] = '-'; stats['max_amps_time'] = '-'
+            stats['min_amps'] = float('inf'); stats['min_amps_date'] = '-'; stats['min_amps_time'] = '-'
+            stats['max_mw'] = -float('inf'); stats['max_mw_date'] = '-'; stats['max_mw_time'] = '-'
+            stats['min_mw'] = float('inf'); stats['min_mw_date'] = '-'; stats['min_mw_time'] = '-'
             
-            total_amps = 0
-            count_amps = 0
+            total_amps = 0; count_amps = 0
+            total_mw = 0; count_mw = 0
             
-            # MW
-            stats['max_mw'] = -float('inf')
-            stats['max_mw_date'] = '-'
-            stats['max_mw_time'] = '-'
-            stats['min_mw'] = float('inf')
-            stats['min_mw_date'] = '-'
-            stats['min_mw_time'] = '-'
-            
-            total_mw = 0
-            count_mw = 0
+            max_mw_entry = None
+            min_mw_entry = None
             
             for e in period_entries:
                 d = e.get('data', {})
                 date = e['date']
                 
-                # Amps
-                max_v = get_float(d.get('max', {}).get('amps'))
-                min_v = get_float(d.get('min', {}).get('amps'))
-                avg_v = get_float(d.get('avg', {}).get('amps'))
+                # Collect Averages (Amps)
+                max_amps = get_float(d.get('max', {}).get('amps'))
+                min_amps = get_float(d.get('min', {}).get('amps'))
+                avg_amps = get_float(d.get('avg', {}).get('amps'))
                 
                 # Auto-calc avg if missing
-                if avg_v is None and max_v is not None and min_v is not None:
-                    avg_v = (max_v + min_v) / 2
+                if avg_amps is None and max_amps is not None and min_amps is not None:
+                    avg_amps = (max_amps + min_amps) / 2
                 
-                if max_v is not None and max_v > stats['max_amps']:
-                    stats['max_amps'] = max_v
-                    stats['max_amps_date'] = date
-                    stats['max_amps_time'] = d.get('max', {}).get('time', '-')
-                
-                if min_v is not None and min_v < stats['min_amps']:
-                    stats['min_amps'] = min_v
-                    stats['min_amps_date'] = date
-                    stats['min_amps_time'] = d.get('min', {}).get('time', '-')
-                    
-                if avg_v is not None:
-                    total_amps += avg_v
+                if avg_amps is not None:
+                    total_amps += avg_amps
                     count_amps += 1
                     
-                # MW
-                max_v = get_float(d.get('max', {}).get('mw'))
-                min_v = get_float(d.get('min', {}).get('mw'))
-                avg_v = get_float(d.get('avg', {}).get('mw'))
+                # Collect Averages (MW) and Find Max/Min MW
+                max_mw = get_float(d.get('max', {}).get('mw'))
+                min_mw = get_float(d.get('min', {}).get('mw'))
+                avg_mw = get_float(d.get('avg', {}).get('mw'))
                 
                 # Auto-calc avg if missing
-                if avg_v is None and max_v is not None and min_v is not None:
-                    avg_v = (max_v + min_v) / 2
-                
-                if max_v is not None and max_v > stats['max_mw']:
-                    stats['max_mw'] = max_v
-                    stats['max_mw_date'] = date
-                    stats['max_mw_time'] = d.get('max', {}).get('time', '-')
-                
-                if min_v is not None and min_v < stats['min_mw']:
-                    stats['min_mw'] = min_v
-                    stats['min_mw_date'] = date
-                    stats['min_mw_time'] = d.get('min', {}).get('time', '-')
+                if avg_mw is None and max_mw is not None and min_mw is not None:
+                    avg_mw = (max_mw + min_mw) / 2
                     
-                if avg_v is not None:
-                    total_mw += avg_v
+                if avg_mw is not None:
+                    total_mw += avg_mw
                     count_mw += 1
-
+                
+                # Find Max MW Entry
+                if max_mw is not None and max_mw > stats['max_mw']:
+                    stats['max_mw'] = max_mw
+                    max_mw_entry = e
+                
+                # Find Min MW Entry
+                if min_mw is not None and min_mw < stats['min_mw']:
+                    stats['min_mw'] = min_mw
+                    min_mw_entry = e
+            
+            # Apply Max MW Logic: Get corresponding Amps/Time from Max MW entry
+            if max_mw_entry:
+                d = max_mw_entry.get('data', {})
+                stats['max_mw_date'] = max_mw_entry['date']
+                stats['max_mw_time'] = d.get('max', {}).get('time', '-')
+                
+                stats['max_amps'] = get_float(d.get('max', {}).get('amps'))
+                stats['max_amps_date'] = max_mw_entry['date']
+                stats['max_amps_time'] = d.get('max', {}).get('time', '-')
+            
+            # Apply Min MW Logic: Get corresponding Amps/Time from Min MW entry
+            if min_mw_entry:
+                d = min_mw_entry.get('data', {})
+                stats['min_mw_date'] = min_mw_entry['date']
+                stats['min_mw_time'] = d.get('min', {}).get('time', '-')
+                
+                stats['min_amps'] = get_float(d.get('min', {}).get('amps'))
+                stats['min_amps_date'] = min_mw_entry['date']
+                stats['min_amps_time'] = d.get('min', {}).get('time', '-')
+            
             # Cleanup and averages
-            if stats['max_amps'] == -float('inf'): stats['max_amps'] = '-'
-            if stats['min_amps'] == float('inf'): stats['min_amps'] = '-'
+            if stats['max_amps'] is None or stats['max_amps'] == -float('inf'): stats['max_amps'] = '-'
+            if stats['min_amps'] is None or stats['min_amps'] == float('inf'): stats['min_amps'] = '-'
             stats['avg_amps'] = round(total_amps / count_amps, 2) if count_amps > 0 else '-'
             
             if stats['max_mw'] == -float('inf'): stats['max_mw'] = '-'
@@ -1528,7 +1786,7 @@ async def export_max_min_data(
         cell = ws.cell(row=header_row, column=col_idx, value=header)
         cell.fill = header_fill
         cell.font = header_font
-        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         # Add border
         cell.border = Border(
             left=Side(style='thin'), 
@@ -1620,17 +1878,23 @@ async def export_max_min_data(
                 ws.cell(row=r, column=9, value=avg_v).border = thin_border
                 ws.cell(row=r, column=9).alignment = center_align
     
-    # Auto-width columns
+    # Auto-width columns with wrapping support
     for col in ws.columns:
         max_length = 0
         column = col[0].column_letter
-        for cell in col:
+        
+        # Calculate max length based on DATA only (skip header at row 1)
+        for cell in col[1:]:
             try:
-                if len(str(cell.value)) > max_length:
-                    max_length = len(cell.value)
+                val = str(cell.value or "")
+                if len(val) > max_length:
+                    max_length = len(val)
             except:
                 pass
-        adjusted_width = (max_length + 2)
+        
+        # Determine width: minimal 8, maximal 20, or fit data
+        # We ignore header length because we enabled wrap_text for headers
+        adjusted_width = max(8, min(max_length + 2, 20))
         ws.column_dimensions[column].width = adjusted_width
                 
     # Adjust widths for summary section if needed
@@ -1831,6 +2095,140 @@ async def save_energy_entry(
         
     return entry_data
 
+@api_router.get("/line-losses/export-all/{year}/{month}")
+async def export_all_line_losses(
+    year: int,
+    month: int,
+    current_user: User = Depends(get_current_user)
+):
+    feeders = await db.feeders.find({}, {"_id": 0}).to_list(100)
+    
+    # Sort feeders based on predefined order
+    FEEDER_ORDER = [
+        "400KV MAHESHWARAM-2",
+        "400KV MAHESHWARAM-1",
+        "400KV NARSAPUR-1",
+        "400KV NARSAPUR-2",
+        "400KV KETHIREDDYPALLY-1",
+        "400KV KETHIREDDYPALLY-2",
+        "400KV NIZAMABAD-1",
+        "400KV NIZAMABAD-2",
+        "220KV PARIGI-1",
+        "220KV PARIGI-2",
+        "220KV THANDUR",
+        "220KV GACHIBOWLI-1",
+        "220KV GACHIBOWLI-2",
+        "220KV KETHIREDDYPALLY",
+        "220KV YEDDUMAILARAM-1",
+        "220KV YEDDUMAILARAM-2",
+        "220KV SADASIVAPET-1",
+        "220KV SADASIVAPET-2"
+    ]
+    
+    feeders.sort(key=lambda x: FEEDER_ORDER.index(x['name']) if x['name'] in FEEDER_ORDER else 999)
+    
+    wb = Workbook()
+    # Remove default sheet
+    if "Sheet" in wb.sheetnames:
+        del wb["Sheet"]
+        
+    start_date = f"{year}-{month:02d}-01"
+    if month == 12:
+        end_date = f"{year + 1}-01-01"
+    else:
+        end_date = f"{year}-{month + 1:02d}-01"
+        
+    header_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+    
+    if not feeders:
+        ws = wb.create_sheet("No Data")
+        ws.cell(row=1, column=1, value="No feeders found")
+        
+    for feeder in feeders:
+        ws = wb.create_sheet(title=feeder['name'][:30]) # Sheet name limit 31 chars
+        
+        headers = [
+            "Date",
+            f"{feeder['end1_name']} Import Initial",
+            f"{feeder['end1_name']} Import Final",
+            f"{feeder['end1_name']} Import MF",
+            f"{feeder['end1_name']} Import Consumption",
+            f"{feeder['end1_name']} Export Initial",
+            f"{feeder['end1_name']} Export Final",
+            f"{feeder['end1_name']} Export MF",
+            f"{feeder['end1_name']} Export Consumption",
+            f"{feeder['end2_name']} Import Initial",
+            f"{feeder['end2_name']} Import Final",
+            f"{feeder['end2_name']} Import MF",
+            f"{feeder['end2_name']} Import Consumption",
+            f"{feeder['end2_name']} Export Initial",
+            f"{feeder['end2_name']} Export Final",
+            f"{feeder['end2_name']} Export MF",
+            f"{feeder['end2_name']} Export Consumption",
+            "% Loss"
+        ]
+        
+        ws.append(headers)
+        for cell in ws[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            
+        entries = await db.entries.find(
+            {"feeder_id": feeder['id'], "date": {"$gte": start_date, "$lt": end_date}},
+            {"_id": 0}
+        ).sort("date", 1).to_list(1000)
+        
+        for entry in entries:
+            ws.append([
+                format_date(entry['date']),
+                entry['end1_import_initial'],
+                entry['end1_import_final'],
+                feeder['end1_import_mf'],
+                entry['end1_import_consumption'],
+                entry['end1_export_initial'],
+                entry['end1_export_final'],
+                feeder['end1_export_mf'],
+                entry['end1_export_consumption'],
+                entry['end2_import_initial'],
+                entry['end2_import_final'],
+                feeder['end2_import_mf'],
+                entry['end2_import_consumption'],
+                entry['end2_export_initial'],
+                entry['end2_export_final'],
+                feeder['end2_export_mf'],
+                entry['end2_export_consumption'],
+                entry['loss_percent']
+            ])
+            
+        # Auto-fit columns with wrap text logic
+        for col in ws.columns:
+            max_length = 0
+            column = col[0].column_letter
+            # Skip header row for width calculation to avoid overly wide columns
+            for cell in col[1:]:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            # Set width based on data content with a minimum and maximum limit
+            # This allows headers to wrap if they are long
+            adjusted_width = max(max_length + 2, 12)
+            ws.column_dimensions[column].width = adjusted_width
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=Line_Losses_{month}-{year}.xlsx"}
+    )
+
+
 @api_router.get("/max-min/export-all/{year}/{month}")
 async def export_all_max_min_data(
     year: int,
@@ -1889,74 +2287,6 @@ async def export_all_max_min_data(
     
     import calendar
     last_day = calendar.monthrange(year, month)[1]
-    
-    # Helper to parse float safely
-    def get_float(val):
-        try:
-            return float(val)
-        except (ValueError, TypeError):
-            return None
-
-    # Helper to calculate stats
-    def calculate_period_stats(period_entries, feeder_type):
-        stats = {}
-        if feeder_type == 'bus_station':
-            stats['max_400kv'] = -float('inf'); stats['max_400kv_date'] = '-'; stats['max_400kv_time'] = '-'
-            stats['min_400kv'] = float('inf'); stats['min_400kv_date'] = '-'; stats['min_400kv_time'] = '-'
-            stats['max_220kv'] = -float('inf'); stats['max_220kv_date'] = '-'; stats['max_220kv_time'] = '-'
-            stats['min_220kv'] = float('inf'); stats['min_220kv_date'] = '-'; stats['min_220kv_time'] = '-'
-            stats['max_load'] = -float('inf'); stats['max_load_date'] = '-'; stats['max_load_time'] = '-'
-            
-            for e in period_entries:
-                d = e.get('data', {}); date = e['date']
-                v = get_float(d.get('max_bus_voltage_400kv', {}).get('value'))
-                if v is not None and v > stats['max_400kv']:
-                    stats['max_400kv'] = v; stats['max_400kv_date'] = date; stats['max_400kv_time'] = d.get('max_bus_voltage_400kv', {}).get('time', '-')
-                v = get_float(d.get('min_bus_voltage_400kv', {}).get('value'))
-                if v is not None and v < stats['min_400kv']:
-                    stats['min_400kv'] = v; stats['min_400kv_date'] = date; stats['min_400kv_time'] = d.get('min_bus_voltage_400kv', {}).get('time', '-')
-                v = get_float(d.get('max_bus_voltage_220kv', {}).get('value'))
-                if v is not None and v > stats['max_220kv']:
-                    stats['max_220kv'] = v; stats['max_220kv_date'] = date; stats['max_220kv_time'] = d.get('max_bus_voltage_220kv', {}).get('time', '-')
-                v = get_float(d.get('min_bus_voltage_220kv', {}).get('value'))
-                if v is not None and v < stats['min_220kv']:
-                    stats['min_220kv'] = v; stats['min_220kv_date'] = date; stats['min_220kv_time'] = d.get('min_bus_voltage_220kv', {}).get('time', '-')
-                v = get_float(d.get('station_load', {}).get('max_mw'))
-                if v is not None and v > stats['max_load']:
-                    stats['max_load'] = v; stats['max_load_date'] = date; stats['max_load_time'] = d.get('station_load', {}).get('time', '-')
-            
-            if stats['max_400kv'] == -float('inf'): stats['max_400kv'] = '-'
-            if stats['min_400kv'] == float('inf'): stats['min_400kv'] = '-'
-            if stats['max_220kv'] == -float('inf'): stats['max_220kv'] = '-'
-            if stats['min_220kv'] == float('inf'): stats['min_220kv'] = '-'
-            if stats['max_load'] == -float('inf'): stats['max_load'] = '-'
-        else:
-            stats['max_amps'] = -float('inf'); stats['max_amps_date'] = '-'; stats['max_amps_time'] = '-'
-            stats['min_amps'] = float('inf'); stats['min_amps_date'] = '-'; stats['min_amps_time'] = '-'
-            stats['max_mw'] = -float('inf'); stats['max_mw_date'] = '-'; stats['max_mw_time'] = '-'
-            stats['min_mw'] = float('inf'); stats['min_mw_date'] = '-'; stats['min_mw_time'] = '-'
-            
-            for e in period_entries:
-                d = e.get('data', {}); date = e['date']
-                max_v = get_float(d.get('max', {}).get('amps'))
-                if max_v is not None and max_v > stats['max_amps']:
-                    stats['max_amps'] = max_v; stats['max_amps_date'] = date; stats['max_amps_time'] = d.get('max', {}).get('time', '-')
-                min_v = get_float(d.get('min', {}).get('amps'))
-                if min_v is not None and min_v < stats['min_amps']:
-                    stats['min_amps'] = min_v; stats['min_amps_date'] = date; stats['min_amps_time'] = d.get('min', {}).get('time', '-')
-                
-                max_v = get_float(d.get('max', {}).get('mw'))
-                if max_v is not None and max_v > stats['max_mw']:
-                    stats['max_mw'] = max_v; stats['max_mw_date'] = date; stats['max_mw_time'] = d.get('max', {}).get('time', '-')
-                min_v = get_float(d.get('min', {}).get('mw'))
-                if min_v is not None and min_v < stats['min_mw']:
-                    stats['min_mw'] = min_v; stats['min_mw_date'] = date; stats['min_mw_time'] = d.get('min', {}).get('time', '-')
-            
-            if stats['max_amps'] == -float('inf'): stats['max_amps'] = '-'
-            if stats['min_amps'] == float('inf'): stats['min_amps'] = '-'
-            if stats['max_mw'] == -float('inf'): stats['max_mw'] = '-'
-            if stats['min_mw'] == float('inf'): stats['min_mw'] = '-'
-        return stats
 
     for feeder in feeders:
         entries = await db.max_min_entries.find(
@@ -2100,6 +2430,90 @@ async def export_all_max_min_data(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename=MaxMin_All_{year}_{month:02d}.xlsx"}
+    )
+
+@api_router.get("/energy/export-all/{year}/{month}")
+async def export_all_energy_sheets(
+    year: int,
+    month: int,
+    current_user: User = Depends(get_current_user)
+):
+    sheets = await db.energy_sheets.find({}, {"_id": 0}).to_list(100)
+    sheets.sort(key=lambda x: x['name'])
+    
+    wb = Workbook()
+    if "Sheet" in wb.sheetnames:
+        del wb["Sheet"]
+        
+    start_date = f"{year}-{month:02d}-01"
+    if month == 12:
+        end_date = f"{year + 1}-01-01"
+    else:
+        end_date = f"{year}-{month + 1:02d}-01"
+        
+    header_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+    
+    for sheet in sheets:
+        ws = wb.create_sheet(title=sheet['name'])
+        
+        meters = await db.energy_meters.find({"sheet_id": sheet['id']}, {"_id": 0}).to_list(100)
+        
+        entries = await db.energy_entries.find(
+            {"sheet_id": sheet['id'], "date": {"$gte": start_date, "$lt": end_date}},
+            {"_id": 0}
+        ).sort("date", 1).to_list(1000)
+        
+        headers = ["Date"]
+        for m in meters:
+            headers.extend([
+                f"{m['name']} Initial",
+                f"{m['name']} Final",
+                f"{m['name']} MF",
+                f"{m['name']} Consumption"
+            ])
+        headers.append("Total Consumption")
+        
+        ws.append(headers)
+        for cell in ws[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            
+        for entry in entries:
+            row = [format_date(entry['date'])]
+            readings_map = {r['meter_id']: r for r in entry['readings']}
+            
+            for m in meters:
+                r = readings_map.get(m['id'])
+                if r:
+                    row.extend([r['initial'], r['final'], m['mf'], r['consumption']])
+                else:
+                    row.extend(['-', '-', m['mf'], '-'])
+            
+            row.append(entry['total_consumption'])
+            ws.append(row)
+            
+        for col in ws.columns:
+            max_length = 0
+            column = col[0].column_letter
+            for cell in col:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = (max_length + 2)
+            ws.column_dimensions[column].width = adjusted_width
+            
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=Energy_Consumption_{month}-{year}.xlsx"}
     )
 
 @api_router.get("/energy/export/{sheet_id}/{year}/{month}")

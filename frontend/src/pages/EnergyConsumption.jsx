@@ -111,6 +111,28 @@ export default function EnergyConsumption() {
       toast.error('Failed to export data');
     }
   };
+
+  const handleExportAll = async () => {
+    try {
+      const response = await axios.get(
+        `${API}/energy/export-all/${year}/${month}`,
+        { responseType: 'blob' }
+      );
+      
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `Energy_Consumption_All_${month}-${year}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      
+      toast.success('Export All completed successfully');
+    } catch (error) {
+      console.error('Export All failed:', error);
+      toast.error('Failed to export all data');
+    }
+  };
   
   const handleRefresh = () => {
     if (!selectedSheet) return;
@@ -306,6 +328,15 @@ export default function EnergyConsumption() {
             >
               <Download className="w-4 h-4 mr-2" />
               Export
+            </Button>
+            <Button 
+                variant="secondary" 
+                onClick={handleExportAll} 
+                disabled={sheets.length === 0}
+                className="flex-1 lg:flex-none"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Export All
             </Button>
             <input 
               id="energy-import-input"

@@ -753,53 +753,97 @@ function SummaryTable({ entries, selectedFeeder, year, month, getStationLoad }) 
                         </TableHeader>
                         <TableBody>
                             {periods.map(p => {
-                                let max400 = -Infinity, min400 = Infinity, max400Date, max400Time, min400Date, min400Time;
-                                let max220 = -Infinity, min220 = Infinity, max220Date, max220Time, min220Date, min220Time;
-                                let maxLoad = -Infinity, maxLoadDate, maxLoadTime;
+                                // 1. Filter entries for this period
+                                const pEntries = entries.filter(e => e.date >= p.start && e.date <= p.end);
+                                
+                                // 2. Find Max/Min Values
+                                let max400Val = -Infinity, min400Val = Infinity;
+                                let max220Val = -Infinity, min220Val = Infinity;
+                                let maxLoadVal = -Infinity;
+                                
+                                pEntries.forEach(e => {
+                                    const v400Max = parseFloat(e.data?.max_bus_voltage_400kv?.value);
+                                    if (!isNaN(v400Max) && v400Max > max400Val) max400Val = v400Max;
+                                    
+                                    const v400Min = parseFloat(e.data?.min_bus_voltage_400kv?.value);
+                                    if (!isNaN(v400Min) && v400Min < min400Val) min400Val = v400Min;
+                                    
+                                    const v220Max = parseFloat(e.data?.max_bus_voltage_220kv?.value);
+                                    if (!isNaN(v220Max) && v220Max > max220Val) max220Val = v220Max;
+                                    
+                                    const v220Min = parseFloat(e.data?.min_bus_voltage_220kv?.value);
+                                    if (!isNaN(v220Min) && v220Min < min220Val) min220Val = v220Min;
+                                    
+                                    const loadVal = parseFloat(getStationLoad(e.date)?.max_mw || e.data?.station_load?.max_mw);
+                                    if (!isNaN(loadVal) && loadVal > maxLoadVal) maxLoadVal = loadVal;
+                                });
 
-                                entries.forEach(e => {
-                                    if (e.date >= p.start && e.date <= p.end) {
-                                        const v400Max = parseFloat(e.data?.max_bus_voltage_400kv?.value);
-                                        const v400Min = parseFloat(e.data?.min_bus_voltage_400kv?.value);
-                                        if (!isNaN(v400Max) && v400Max > max400) { max400 = v400Max; max400Date = e.date; max400Time = e.data.max_bus_voltage_400kv.time; }
-                                        if (!isNaN(v400Min) && v400Min < min400) { min400 = v400Min; min400Date = e.date; min400Time = e.data.min_bus_voltage_400kv.time; }
-                                        
-                                        const v220Max = parseFloat(e.data?.max_bus_voltage_220kv?.value);
-                                        const v220Min = parseFloat(e.data?.min_bus_voltage_220kv?.value);
-                                        if (!isNaN(v220Max) && v220Max > max220) { max220 = v220Max; max220Date = e.date; max220Time = e.data.max_bus_voltage_220kv.time; }
-                                        if (!isNaN(v220Min) && v220Min < min220) { min220 = v220Min; min220Date = e.date; min220Time = e.data.min_bus_voltage_220kv.time; }
-                                        
-                                        const loadVal = parseFloat(getStationLoad(e.date)?.max_mw || e.data?.station_load?.max_mw);
-                                        if (!isNaN(loadVal) && loadVal > maxLoad) { maxLoad = loadVal; maxLoadDate = e.date; maxLoadTime = getStationLoad(e.date)?.time || e.data?.station_load?.time; }
+                                // 3. Collect Candidates
+                                const candsMax400 = [], candsMin400 = [];
+                                const candsMax220 = [], candsMin220 = [];
+                                let maxLoadEntry = { date: '-', time: '-' };
+
+                                pEntries.forEach(e => {
+                                    const v400Max = parseFloat(e.data?.max_bus_voltage_400kv?.value);
+                                    if (v400Max === max400Val) candsMax400.push({ date: e.date, time: (e.data?.max_bus_voltage_400kv?.time || '').trim() });
+                                    
+                                    const v400Min = parseFloat(e.data?.min_bus_voltage_400kv?.value);
+                                    if (v400Min === min400Val) candsMin400.push({ date: e.date, time: (e.data?.min_bus_voltage_400kv?.time || '').trim() });
+
+                                    const v220Max = parseFloat(e.data?.max_bus_voltage_220kv?.value);
+                                    if (v220Max === max220Val) candsMax220.push({ date: e.date, time: (e.data?.max_bus_voltage_220kv?.time || '').trim() });
+
+                                    const v220Min = parseFloat(e.data?.min_bus_voltage_220kv?.value);
+                                    if (v220Min === min220Val) candsMin220.push({ date: e.date, time: (e.data?.min_bus_voltage_220kv?.time || '').trim() });
+
+                                    const loadVal = parseFloat(getStationLoad(e.date)?.max_mw || e.data?.station_load?.max_mw);
+                                    if (loadVal === maxLoadVal) {
+                                        maxLoadEntry = { 
+                                            date: e.date, 
+                                            time: getStationLoad(e.date)?.time || e.data?.station_load?.time || '-'
+                                        };
                                     }
                                 });
+
+                                // 4. Find Best Matches (Common Time Priority)
+                                const findBest = (listA, listB) => {
+                                    for (const a of listA) {
+                                        for (const b of listB) {
+                                            if (a.date === b.date && a.time === b.time) return [a, b];
+                                        }
+                                    }
+                                    return [listA[0] || { date: '-', time: '-' }, listB[0] || { date: '-', time: '-' }];
+                                };
+
+                                const [finalMax400, finalMax220] = findBest(candsMax400, candsMax220);
+                                const [finalMin400, finalMin220] = findBest(candsMin400, candsMin220);
 
                                 return (
                                     <Fragment key={p.name}>
                                         <TableRow key={`${p.name}-400`} className="hover:bg-slate-50/50">
                                             <TableCell rowSpan={3} className="font-medium text-center bg-slate-50/30">{p.name}</TableCell>
                                             <TableCell className="font-medium text-slate-600 text-center">400KV Bus Voltage</TableCell>
-                                            <TableCell className="border-l text-center font-medium text-rose-600">{max400 === -Infinity ? '-' : max400}</TableCell>
-                                            <TableCell className="text-center text-slate-500">{formatDate(max400Date)}</TableCell>
-                                            <TableCell className="text-center text-slate-500">{max400Time || '-'}</TableCell>
-                                            <TableCell className="border-l text-center font-medium text-blue-600">{min400 === Infinity ? '-' : min400}</TableCell>
-                                            <TableCell className="text-center text-slate-500">{formatDate(min400Date)}</TableCell>
-                                            <TableCell className="text-center text-slate-500">{min400Time || '-'}</TableCell>
+                                            <TableCell className="border-l text-center font-medium text-rose-600">{max400Val === -Infinity ? '-' : max400Val}</TableCell>
+                                            <TableCell className="text-center text-slate-500">{formatDate(finalMax400.date)}</TableCell>
+                                            <TableCell className="text-center text-slate-500">{finalMax400.time}</TableCell>
+                                            <TableCell className="border-l text-center font-medium text-blue-600">{min400Val === Infinity ? '-' : min400Val}</TableCell>
+                                            <TableCell className="text-center text-slate-500">{formatDate(finalMin400.date)}</TableCell>
+                                            <TableCell className="text-center text-slate-500">{finalMin400.time}</TableCell>
                                         </TableRow>
                                         <TableRow key={`${p.name}-220`} className="hover:bg-slate-50/50">
                                             <TableCell className="font-medium text-slate-600 text-center">220KV Bus Voltage</TableCell>
-                                            <TableCell className="border-l text-center font-medium text-rose-600">{max220 === -Infinity ? '-' : max220}</TableCell>
-                                            <TableCell className="text-center text-slate-500">{formatDate(max220Date)}</TableCell>
-                                            <TableCell className="text-center text-slate-500">{max220Time || '-'}</TableCell>
-                                            <TableCell className="border-l text-center font-medium text-blue-600">{min220 === Infinity ? '-' : min220}</TableCell>
-                                            <TableCell className="text-center text-slate-500">{formatDate(min220Date)}</TableCell>
-                                            <TableCell className="text-center text-slate-500">{min220Time || '-'}</TableCell>
+                                            <TableCell className="border-l text-center font-medium text-rose-600">{max220Val === -Infinity ? '-' : max220Val}</TableCell>
+                                            <TableCell className="text-center text-slate-500">{formatDate(finalMax220.date)}</TableCell>
+                                            <TableCell className="text-center text-slate-500">{finalMax220.time}</TableCell>
+                                            <TableCell className="border-l text-center font-medium text-blue-600">{min220Val === Infinity ? '-' : min220Val}</TableCell>
+                                            <TableCell className="text-center text-slate-500">{formatDate(finalMin220.date)}</TableCell>
+                                            <TableCell className="text-center text-slate-500">{finalMin220.time}</TableCell>
                                         </TableRow>
                                         <TableRow key={`${p.name}-load`} className="hover:bg-slate-50/50 border-b border-slate-100">
                                             <TableCell className="font-medium text-slate-600 text-center">Station Load (MW)</TableCell>
-                                            <TableCell className="border-l text-center font-medium text-rose-600">{maxLoad === -Infinity ? '-' : maxLoad}</TableCell>
-                                            <TableCell className="text-center text-slate-500">{formatDate(maxLoadDate)}</TableCell>
-                                            <TableCell className="text-center text-slate-500">{maxLoadTime || '-'}</TableCell>
+                                            <TableCell className="border-l text-center font-medium text-rose-600">{maxLoadVal === -Infinity ? '-' : maxLoadVal}</TableCell>
+                                            <TableCell className="text-center text-slate-500">{formatDate(maxLoadEntry.date)}</TableCell>
+                                            <TableCell className="text-center text-slate-500">{maxLoadEntry.time}</TableCell>
                                             <TableCell colSpan={3} className="border-l text-center text-muted-foreground">-</TableCell>
                                         </TableRow>
                                     </Fragment>
@@ -843,6 +887,9 @@ function SummaryTable({ entries, selectedFeeder, year, month, getStationLoad }) 
                                 let totalMW = 0, countMW = 0;
                                 let maxAmps = -Infinity, minAmps = Infinity, maxAmpsDate, maxAmpsTime, minAmpsDate, minAmpsTime;
                                 let totalAmps = 0, countAmps = 0;
+                                
+                                let maxMWEntry = null;
+                                let minMWEntry = null;
 
                                 entries.forEach(e => {
                                     if (e.date >= p.start && e.date <= p.end) {
@@ -858,20 +905,18 @@ function SummaryTable({ entries, selectedFeeder, year, month, getStationLoad }) 
 
                                         if (!isNaN(valMaxMW) && valMaxMW > maxMW) { 
                                             maxMW = valMaxMW; 
-                                            maxMWDate = e.date; 
-                                            maxMWTime = e.data.max.time; 
+                                            maxMWEntry = e;
                                         }
                                         if (!isNaN(valMinMW) && valMinMW < minMW) { 
                                             minMW = valMinMW; 
-                                            minMWDate = e.date; 
-                                            minMWTime = e.data.min.time; 
+                                            minMWEntry = e;
                                         }
                                         if (!isNaN(valAvgMW)) {
                                             totalMW += valAvgMW;
                                             countMW++;
                                         }
 
-                                        // Amps Calculations
+                                        // Amps Calculations (Only for Averages)
                                         const valMaxAmps = parseFloat(e.data?.max?.amps);
                                         const valMinAmps = parseFloat(e.data?.min?.amps);
                                         let valAvgAmps = parseFloat(e.data?.avg?.amps);
@@ -880,22 +925,38 @@ function SummaryTable({ entries, selectedFeeder, year, month, getStationLoad }) 
                                             valAvgAmps = (valMaxAmps + valMinAmps) / 2;
                                         }
                                         
-                                        if (!isNaN(valMaxAmps) && valMaxAmps > maxAmps) { 
-                                            maxAmps = valMaxAmps; 
-                                            maxAmpsDate = e.date; 
-                                            maxAmpsTime = e.data.max.time; 
-                                        }
-                                        if (!isNaN(valMinAmps) && valMinAmps < minAmps) { 
-                                            minAmps = valMinAmps; 
-                                            minAmpsDate = e.date; 
-                                            minAmpsTime = e.data.min.time; 
-                                        }
                                         if (!isNaN(valAvgAmps)) {
                                             totalAmps += valAvgAmps;
                                             countAmps++;
                                         }
                                     }
                                 });
+
+                                // Apply Max MW Logic
+                                if (maxMWEntry) {
+                                    maxMWDate = maxMWEntry.date;
+                                    maxMWTime = maxMWEntry.data?.max?.time;
+                                    
+                                    const valMaxAmps = parseFloat(maxMWEntry.data?.max?.amps);
+                                    if (!isNaN(valMaxAmps)) {
+                                        maxAmps = valMaxAmps;
+                                        maxAmpsDate = maxMWEntry.date;
+                                        maxAmpsTime = maxMWEntry.data?.max?.time;
+                                    }
+                                }
+
+                                // Apply Min MW Logic
+                                if (minMWEntry) {
+                                    minMWDate = minMWEntry.date;
+                                    minMWTime = minMWEntry.data?.min?.time;
+                                    
+                                    const valMinAmps = parseFloat(minMWEntry.data?.min?.amps);
+                                    if (!isNaN(valMinAmps)) {
+                                        minAmps = valMinAmps;
+                                        minAmpsDate = minMWEntry.date;
+                                        minAmpsTime = minMWEntry.data?.min?.time;
+                                    }
+                                }
 
                                 const avgMW = countMW > 0 ? (totalMW / countMW).toFixed(2) : '-';
                                 const avgAmps = countAmps > 0 ? (totalAmps / countAmps).toFixed(2) : '-';
