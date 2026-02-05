@@ -204,6 +204,22 @@ export default function MaxMinEntryModal({ isOpen, onClose, onSave, feeder, year
     </div>
     );
   };
+ 
+  const getGroupTime = (kind) => {
+    const explicit = getValue(`${kind}_bus_voltage.time`);
+    if (explicit) return explicit;
+    return (
+      getValue(`${kind}_bus_voltage_400kv.time`) ||
+      getValue(`${kind}_bus_voltage_220kv.time`) ||
+      ''
+    );
+  };
+ 
+  const setGroupTime = (kind, value) => {
+    handleChange(`${kind}_bus_voltage.time`, value);
+    handleChange(`${kind}_bus_voltage_400kv.time`, value);
+    handleChange(`${kind}_bus_voltage_220kv.time`, value);
+  };
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -260,7 +276,7 @@ export default function MaxMinEntryModal({ isOpen, onClose, onSave, feeder, year
                     </div>
                 </div>
 
-                {selectedFeeder.type !== 'bus_station' && (
+                {feeder.type !== 'bus_station' && (
                     <div className="flex justify-end">
                         <Button 
                             type="button" 
@@ -282,31 +298,69 @@ export default function MaxMinEntryModal({ isOpen, onClose, onSave, feeder, year
                   <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-4">
                     <h3 className="font-semibold text-slate-800 flex items-center gap-2">
                         <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                        400KV Bus Voltage
+                        Maximum Voltages
                     </h3>
-                    {renderField("Max Value (kV)", "max_bus_voltage_400kv.value")}
-                    {renderTimeField("Time", "max_bus_voltage_400kv.time")}
-                    {renderField("Min Value (kV)", "min_bus_voltage_400kv.value")}
-                    {renderTimeField("Time", "min_bus_voltage_400kv.time")}
-                    <div className="flex justify-end pt-2">
-                        <Button type="button" variant="outline" size="sm" onClick={(e) => handleSharedTimeChange('max', getValue('max_bus_voltage_400kv.time'))}>
-                            Copy Max Time to 220KV
-                        </Button>
-                        <Button type="button" variant="outline" size="sm" className="ml-2" onClick={(e) => handleSharedTimeChange('min', getValue('min_bus_voltage_400kv.time'))}>
-                            Copy Min Time to 220KV
-                        </Button>
+                    
+                    <div className="space-y-4">
+                        <div>
+                            <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 block">400KV Bus Voltage</Label>
+                            {renderField("Max Value (kV)", "max_bus_voltage_400kv.value")}
+                        </div>
+                        
+                        <div className="pt-2 border-t border-slate-200/50">
+                             <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 block mt-2">220KV Bus Voltage</Label>
+                            {renderField("Max Value (kV)", "max_bus_voltage_220kv.value")}
+                        </div>
+ 
+                        <div className="grid grid-cols-4 items-center gap-4">
+                          <Label htmlFor="max_bus_voltage.time" className="text-right text-slate-600 font-medium">
+                            Time
+                          </Label>
+                          <Input
+                            id="max_bus_voltage.time"
+                            type={getGroupTime('max') === 'N/S' ? 'text' : 'time'}
+                            value={getGroupTime('max')}
+                            onChange={(e) => setGroupTime('max', e.target.value)}
+                            className={`col-span-3 border-slate-200 focus:ring-2 focus:ring-indigo-500/20 ${getGroupTime('max') === 'N/S' ? 'bg-slate-50 text-slate-500' : ''}`}
+                            disabled={getGroupTime('max') === 'N/S'}
+                            required
+                          />
+                        </div>
                     </div>
                   </div>
 
                   <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-4">
                     <h3 className="font-semibold text-slate-800 flex items-center gap-2">
                         <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
-                        220KV Bus Voltage
+                        Minimum Voltages
                     </h3>
-                    {renderField("Max Value (kV)", "max_bus_voltage_220kv.value")}
-                    {renderTimeField("Time", "max_bus_voltage_220kv.time")}
-                    {renderField("Min Value (kV)", "min_bus_voltage_220kv.value")}
-                    {renderTimeField("Time", "min_bus_voltage_220kv.time")}
+                    
+                    <div className="space-y-4">
+                        <div>
+                            <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 block">400KV Bus Voltage</Label>
+                            {renderField("Min Value (kV)", "min_bus_voltage_400kv.value")}
+                        </div>
+                        
+                        <div className="pt-2 border-t border-slate-200/50">
+                            <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 block mt-2">220KV Bus Voltage</Label>
+                            {renderField("Min Value (kV)", "min_bus_voltage_220kv.value")}
+                        </div>
+ 
+                        <div className="grid grid-cols-4 items-center gap-4">
+                          <Label htmlFor="min_bus_voltage.time" className="text-right text-slate-600 font-medium">
+                            Time
+                          </Label>
+                          <Input
+                            id="min_bus_voltage.time"
+                            type={getGroupTime('min') === 'N/S' ? 'text' : 'time'}
+                            value={getGroupTime('min')}
+                            onChange={(e) => setGroupTime('min', e.target.value)}
+                            className={`col-span-3 border-slate-200 focus:ring-2 focus:ring-indigo-500/20 ${getGroupTime('min') === 'N/S' ? 'bg-slate-50 text-slate-500' : ''}`}
+                            disabled={getGroupTime('min') === 'N/S'}
+                            required
+                          />
+                        </div>
+                    </div>
                   </div>
                 </>
               ) : (

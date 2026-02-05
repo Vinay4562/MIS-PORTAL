@@ -1,14 +1,15 @@
-import React, { useState, useEffect, Fragment } from 'react';
+ import React, { useState, useEffect, Fragment, useRef } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Calendar, Download, Plus, Edit, Trash2, RefreshCcw } from 'lucide-react';
+ import { Calendar, Download, Plus, Edit, Trash2, RefreshCcw, Upload } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 import MaxMinEntryModal from '@/components/MaxMinEntryModal';
 import MaxMinAnalytics from '@/components/MaxMinAnalytics';
+ import MaxMinImportPreviewModal from '@/components/MaxMinImportPreviewModal';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -50,6 +51,9 @@ export default function MaxMinData() {
   const [loading, setLoading] = useState(false);
   const [initialized, setInitialized] = useState(false);
   const [ictEntries, setIctEntries] = useState({});
+  const [importPreviewOpen, setImportPreviewOpen] = useState(false);
+  const [importData, setImportData] = useState([]);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     initializeModule();
@@ -291,6 +295,51 @@ export default function MaxMinData() {
       toast.error('Failed to export all data');
     }
   };
+ 
+  const handleImportClick = () => {
+    if (!selectedFeeder) return;
+    fileInputRef.current?.click();
+  };
+ 
+  const handleFileSelect = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file || !selectedFeeder) return;
+    event.target.value = '';
+    const formData = new FormData();
+    formData.append('file', file);
+    setLoading(true);
+    try {
+      const response = await axios.post(`${API}/max-min/preview-import/${selectedFeeder.id}`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      setImportData(response.data);
+      setImportPreviewOpen(true);
+    } catch (error) {
+      console.error('Import preview failed:', error);
+      toast.error(error.response?.data?.detail || 'Failed to preview import');
+    } finally {
+      setLoading(false);
+    }
+  };
+ 
+  const handleImportConfirm = async () => {
+    if (!selectedFeeder) return;
+    setLoading(true);
+    try {
+      await axios.post(`${API}/max-min/import-entries`, {
+        feeder_id: selectedFeeder.id,
+        entries: importData
+      });
+      toast.success('Data imported successfully');
+      setImportPreviewOpen(false);
+      fetchEntries(selectedFeeder.id, year, month);
+    } catch (error) {
+      console.error('Import failed:', error);
+      toast.error('Failed to import data');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const getStationLoad = (date) => {
     let totalMaxMW = 0;
@@ -432,6 +481,21 @@ export default function MaxMinData() {
             New Entry
           </Button>
           <Button 
+            onClick={handleImportClick}
+            variant="outline"
+            className="flex-1 lg:flex-none border-slate-200 hover:bg-slate-50 text-slate-700 font-medium"
+          >
+            <Upload className="w-4 h-4 mr-2 text-indigo-500" />
+            Import
+          </Button>
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileSelect}
+            className="hidden"
+            accept=".xlsx,.xls"
+          />
+          <Button 
             variant="secondary" 
             onClick={handleExport}
             disabled={!selectedFeeder || entries.length === 0}
@@ -501,10 +565,8 @@ export default function MaxMinData() {
                             <TableHead className="w-[120px] font-bold text-slate-700 text-center">Date</TableHead>
                             {selectedFeeder.type === 'bus_station' ? (
                                 <>
-                                    <TableHead colSpan={2} className="text-center border-l border-slate-200 text-rose-700 font-bold">Max 400KV Bus Voltage</TableHead>
-                                    <TableHead colSpan={2} className="text-center border-l border-slate-200 text-orange-700 font-bold">Max 220KV Bus Voltage</TableHead>
-                                    <TableHead colSpan={2} className="text-center border-l border-slate-200 text-blue-700 font-bold">Min 400KV Bus Voltage</TableHead>
-                                    <TableHead colSpan={2} className="text-center border-l border-slate-200 text-cyan-700 font-bold">Min 220KV Bus Voltage</TableHead>
+                                    <TableHead colSpan={3} className="text-center border-l border-slate-200 text-rose-700 font-bold">Maximum Voltages</TableHead>
+                                    <TableHead colSpan={3} className="text-center border-l border-slate-200 text-blue-700 font-bold">Minimum Voltages</TableHead>
                                     <TableHead colSpan={3} className="text-center border-l border-slate-200 text-purple-700 font-bold">Station Load</TableHead>
                                 </>
                             ) : (
@@ -520,10 +582,8 @@ export default function MaxMinData() {
                             <TableHead className="text-center"></TableHead>
                             {selectedFeeder.type === 'bus_station' ? (
                                 <>
-                                    <TableHead className="border-l border-slate-200 text-rose-600 text-center">KV</TableHead><TableHead className="text-rose-600 text-center">Time</TableHead>{/*
-                                    */}<TableHead className="border-l border-slate-200 text-orange-600 text-center">KV</TableHead><TableHead className="text-orange-600 text-center">Time</TableHead>{/*
-                                    */}<TableHead className="border-l border-slate-200 text-blue-600 text-center">KV</TableHead><TableHead className="text-blue-600 text-center">Time</TableHead>{/*
-                                    */}<TableHead className="border-l border-slate-200 text-cyan-600 text-center">KV</TableHead><TableHead className="text-cyan-600 text-center">Time</TableHead>{/*
+                                    <TableHead className="border-l border-slate-200 text-rose-600 text-center">400KV</TableHead><TableHead className="text-rose-600 text-center">220KV</TableHead><TableHead className="text-rose-600 text-center">Time</TableHead>{/*
+                                    */}<TableHead className="border-l border-slate-200 text-blue-600 text-center">400KV</TableHead><TableHead className="text-blue-600 text-center">220KV</TableHead><TableHead className="text-blue-600 text-center">Time</TableHead>{/*
                                     */}<TableHead className="border-l border-slate-200 text-purple-600 text-center">Max MW</TableHead><TableHead className="text-purple-600 text-center">Time</TableHead><TableHead className="text-purple-600 text-center">MVAR</TableHead>
                                 </>
                             ) : (
@@ -556,16 +616,12 @@ export default function MaxMinData() {
                                     {selectedFeeder.type === 'bus_station' ? (
                                         <>
                                             <TableCell className="border-l text-center">{getVal(entry.data, 'max_bus_voltage_400kv.value')}</TableCell>{/*
-                                            */}<TableCell className="text-center">{getVal(entry.data, 'max_bus_voltage_400kv.time')}</TableCell>{/*
-                                            
-                                            */}<TableCell className="border-l text-center">{getVal(entry.data, 'max_bus_voltage_220kv.value')}</TableCell>{/*
-                                            */}<TableCell className="text-center">{getVal(entry.data, 'max_bus_voltage_220kv.time')}</TableCell>{/*
+                                            */}<TableCell className="text-center">{getVal(entry.data, 'max_bus_voltage_220kv.value')}</TableCell>{/*
+                                            */}<TableCell className="text-center">{getVal(entry.data, 'max_bus_voltage.time') || getVal(entry.data, 'max_bus_voltage_400kv.time') || getVal(entry.data, 'max_bus_voltage_220kv.time')}</TableCell>{/*
                                             
                                             */}<TableCell className="border-l text-center">{getVal(entry.data, 'min_bus_voltage_400kv.value')}</TableCell>{/*
-                                            */}<TableCell className="text-center">{getVal(entry.data, 'min_bus_voltage_400kv.time')}</TableCell>{/*
-                                            
-                                            */}<TableCell className="border-l text-center">{getVal(entry.data, 'min_bus_voltage_220kv.value')}</TableCell>{/*
-                                            */}<TableCell className="text-center">{getVal(entry.data, 'min_bus_voltage_220kv.time')}</TableCell>{/*
+                                            */}<TableCell className="text-center">{getVal(entry.data, 'min_bus_voltage_220kv.value')}</TableCell>{/*
+                                            */}<TableCell className="text-center">{getVal(entry.data, 'min_bus_voltage.time') || getVal(entry.data, 'min_bus_voltage_400kv.time') || getVal(entry.data, 'min_bus_voltage_220kv.time')}</TableCell>{/*
                                             
                                             */}<TableCell className="border-l text-center">{getStationLoad(entry.date)?.max_mw || getVal(entry.data, 'station_load.max_mw')}</TableCell>{/*
                                             */}<TableCell className="text-center">{getStationLoad(entry.date)?.time || getVal(entry.data, 'station_load.time')}</TableCell>{/*
@@ -608,6 +664,15 @@ export default function MaxMinData() {
             </CardContent>
         </Card>
       )}
+ 
+      <MaxMinImportPreviewModal
+        isOpen={importPreviewOpen}
+        onClose={() => setImportPreviewOpen(false)}
+        data={importData}
+        feederType={selectedFeeder?.type}
+        onConfirm={handleImportConfirm}
+        loading={loading}
+      />
 
       {/* Summary Table */}
       {selectedFeeder && entries.length > 0 && (

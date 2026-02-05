@@ -375,6 +375,221 @@ async def get_entries(
             entry['updated_at'] = datetime.fromisoformat(entry['updated_at'])
     return entries
 
+@api_router.post("/max-min/preview-import/{feeder_id}")
+async def preview_max_min_import(
+    feeder_id: str,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user)
+):
+    feeder = await db.max_min_feeders.find_one({"id": feeder_id}, {"_id": 0})
+    if not feeder:
+        raise HTTPException(status_code=404, detail="Feeder not found")
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are supported")
+    content = await file.read()
+    wb = load_workbook(io.BytesIO(content), data_only=True)
+    ws = wb.active
+    headers = [str(ws.cell(row=1, column=col).value or "").strip() for col in range(1, ws.max_column + 1)]
+    def tokens(h):
+        return h.lower().replace("_", " ").replace("-", " ").replace(".", " ").split()
+    def find_col(required):
+        for idx, h in enumerate(headers):
+            t = tokens(h)
+            if all(r in t for r in required):
+                return idx + 1
+        return None
+    preview = []
+    ict_ids = []
+    if feeder['type'] == 'bus_station':
+        ict_feeders = await db.max_min_feeders.find({"type": "ict_feeder"}, {"id": 1}).to_list(None)
+        ict_ids = [f['id'] for f in ict_feeders]
+
+    for row in range(2, ws.max_row + 1):
+        date_cell = ws.cell(row=row, column=1).value
+        if not date_cell:
+            continue
+        if isinstance(date_cell, datetime):
+            date_str = date_cell.date().isoformat()
+        else:
+            val_str = str(date_cell).strip()
+            fmts = ["%Y-%m-%d", "%d-%m-%Y", "%d-%b-%y", "%d-%b-%Y", "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y"]
+            parsed = False
+            for fmt in fmts:
+                try:
+                    date_str = datetime.strptime(val_str, fmt).date().isoformat()
+                    parsed = True
+                    break
+                except:
+                    continue
+            if not parsed:
+                continue
+        data = {}
+        if feeder['type'] == 'bus_station':
+            v400_max_col = find_col({"max", "bus", "voltage", "400kv"}) or find_col({"max", "400kv"})
+            v220_max_col = find_col({"max", "bus", "voltage", "220kv"}) or find_col({"max", "220kv"})
+            v400_min_col = find_col({"min", "bus", "voltage", "400kv"}) or find_col({"min", "400kv"})
+            v220_min_col = find_col({"min", "bus", "voltage", "220kv"}) or find_col({"min", "220kv"})
+            max_time_col = find_col({"max", "time"})
+            min_time_col = find_col({"min", "time"})
+            load_max_mw_col = find_col({"station", "load", "max", "mw"}) or find_col({"max", "mw"})
+            load_mvar_col = find_col({"station", "load", "mvar"}) or find_col({"mvar"})
+            load_time_col = find_col({"station", "load", "time"})
+
+            def getf(c):
+                try:
+                    v = ws.cell(row=row, column=c).value if c else None
+                    return float(v) if v is not None and str(v).strip() != "" else None
+                except:
+                    return None
+            def gets(c):
+                v = ws.cell(row=row, column=c).value if c else None
+                return str(v).strip() if v is not None else None
+            max_time = gets(max_time_col)
+            min_time = gets(min_time_col)
+            
+            station_time = gets(load_time_col)
+            if ict_ids:
+                ict_entries = await db.max_min_entries.find(
+                    {"feeder_id": {"$in": ict_ids}, "date": date_str},
+                    {"data.max.time": 1}
+                ).to_list(None)
+                times = [e.get('data', {}).get('max', {}).get('time') for e in ict_entries]
+                times = [t for t in times if t]
+                if times:
+                    from collections import Counter
+                    station_time = Counter(times).most_common(1)[0][0]
+
+            data = {
+                "max_bus_voltage_400kv": {"value": getf(v400_max_col), "time": max_time},
+                "max_bus_voltage_220kv": {"value": getf(v220_max_col), "time": max_time},
+                "min_bus_voltage_400kv": {"value": getf(v400_min_col), "time": min_time},
+                "min_bus_voltage_220kv": {"value": getf(v220_min_col), "time": min_time},
+                "station_load": {"max_mw": getf(load_max_mw_col), "mvar": getf(load_mvar_col), "time": station_time}
+            }
+            if all(
+                x is None for x in [
+                    data["max_bus_voltage_400kv"]["value"],
+                    data["max_bus_voltage_220kv"]["value"],
+                    data["min_bus_voltage_400kv"]["value"],
+                    data["min_bus_voltage_220kv"]["value"],
+                    data["station_load"]["max_mw"],
+                    data["station_load"]["mvar"]
+                ]
+            ):
+                continue
+        elif feeder['type'] == 'ict_feeder':
+            max_amps_col = find_col({"max", "amps"})
+            max_mw_col = find_col({"max", "mw"})
+            max_mvar_col = find_col({"max", "mvar"})
+            max_time_col = find_col({"max", "time"})
+            min_amps_col = find_col({"min", "amps"})
+            min_mw_col = find_col({"min", "mw"})
+            min_mvar_col = find_col({"min", "mvar"})
+            min_time_col = find_col({"min", "time"})
+            avg_amps_col = find_col({"avg", "amps"})
+            avg_mw_col = find_col({"avg", "mw"})
+            def getf(c):
+                try:
+                    v = ws.cell(row=row, column=c).value if c else None
+                    return float(v) if v is not None and str(v).strip() != "" else None
+                except:
+                    return None
+            def gets(c):
+                v = ws.cell(row=row, column=c).value if c else None
+                return str(v).strip() if v is not None else None
+            
+            # Calculate Avg if missing
+            max_amps_val = getf(max_amps_col)
+            min_amps_val = getf(min_amps_col)
+            avg_amps_val = getf(avg_amps_col)
+            
+            if avg_amps_val is None and max_amps_val is not None and min_amps_val is not None:
+                avg_amps_val = (max_amps_val + min_amps_val) / 2
+                
+            max_mw_val = getf(max_mw_col)
+            min_mw_val = getf(min_mw_col)
+            avg_mw_val = getf(avg_mw_col)
+            
+            if avg_mw_val is None and max_mw_val is not None and min_mw_val is not None:
+                avg_mw_val = (max_mw_val + min_mw_val) / 2
+
+            data = {
+                "max": {"amps": max_amps_val, "mw": max_mw_val, "mvar": getf(max_mvar_col), "time": gets(max_time_col)},
+                "min": {"amps": min_amps_val, "mw": min_mw_val, "mvar": getf(min_mvar_col), "time": gets(min_time_col)},
+                "avg": {"amps": avg_amps_val, "mw": avg_mw_val}
+            }
+            if all(x is None for x in [data["max"]["amps"], data["max"]["mw"], data["min"]["amps"], data["min"]["mw"], data["avg"]["amps"], data["avg"]["mw"]]):
+                continue
+        else:
+            max_amps_col = find_col({"max", "amps"})
+            max_mw_col = find_col({"max", "mw"})
+            max_time_col = find_col({"max", "time"})
+            min_amps_col = find_col({"min", "amps"})
+            min_mw_col = find_col({"min", "mw"})
+            min_time_col = find_col({"min", "time"})
+            avg_amps_col = find_col({"avg", "amps"})
+            avg_mw_col = find_col({"avg", "mw"})
+            def getf(c):
+                try:
+                    v = ws.cell(row=row, column=c).value if c else None
+                    return float(v) if v is not None and str(v).strip() != "" else None
+                except:
+                    return None
+            def gets(c):
+                v = ws.cell(row=row, column=c).value if c else None
+                return str(v).strip() if v is not None else None
+            
+            # Calculate Avg if missing
+            max_amps_val = getf(max_amps_col)
+            min_amps_val = getf(min_amps_col)
+            avg_amps_val = getf(avg_amps_col)
+            
+            if avg_amps_val is None and max_amps_val is not None and min_amps_val is not None:
+                avg_amps_val = (max_amps_val + min_amps_val) / 2
+                
+            max_mw_val = getf(max_mw_col)
+            min_mw_val = getf(min_mw_col)
+            avg_mw_val = getf(avg_mw_col)
+            
+            if avg_mw_val is None and max_mw_val is not None and min_mw_val is not None:
+                avg_mw_val = (max_mw_val + min_mw_val) / 2
+
+            data = {
+                "max": {"amps": max_amps_val, "mw": max_mw_val, "time": gets(max_time_col)},
+                "min": {"amps": min_amps_val, "mw": min_mw_val, "time": gets(min_time_col)},
+                "avg": {"amps": avg_amps_val, "mw": avg_mw_val}
+            }
+            if all(x is None for x in [data["max"]["amps"], data["max"]["mw"], data["min"]["amps"], data["min"]["mw"], data["avg"]["amps"], data["avg"]["mw"]]):
+                continue
+        exists = await db.max_min_entries.find_one({"feeder_id": feeder_id, "date": date_str})
+        preview.append({"date": date_str, "data": data, "exists": bool(exists)})
+    return preview
+
+class MaxMinImportPayload(BaseModel):
+    feeder_id: str
+    entries: List[dict]
+
+@api_router.post("/max-min/import-entries")
+async def import_max_min_entries(payload: MaxMinImportPayload, current_user: User = Depends(get_current_user)):
+    feeder_id = payload.feeder_id
+    feeder = await db.max_min_feeders.find_one({"id": feeder_id}, {"_id": 0})
+    if not feeder:
+        raise HTTPException(status_code=404, detail="Feeder not found")
+    entries_sorted = sorted(payload.entries, key=lambda x: x['date'])
+    imported = 0
+    for e in entries_sorted:
+        date_str = e['date']
+        existing = await db.max_min_entries.find_one({"feeder_id": feeder_id, "date": date_str})
+        if existing:
+            continue
+        entry_obj = MaxMinEntry(feeder_id=feeder_id, date=date_str, data=e.get("data", {}))
+        doc = entry_obj.model_dump()
+        doc['created_at'] = doc['created_at'].isoformat()
+        doc['updated_at'] = doc['updated_at'].isoformat()
+        await db.max_min_entries.insert_one(doc)
+        imported += 1
+    return {"imported": imported}
+
 @api_router.put("/entries/{entry_id}", response_model=DailyEntry)
 async def update_entry(entry_id: str, update_data: DailyEntryUpdate, current_user: User = Depends(get_current_user)):
     entry = await db.entries.find_one({"id": entry_id}, {"_id": 0})
@@ -966,6 +1181,42 @@ async def create_max_min_entry(entry_data: MaxMinEntryCreate, current_user: User
         doc['updated_at'] = doc['updated_at'].isoformat()
         await db.max_min_entries.insert_one(doc)
         return entry_obj
+
+@api_router.put("/max-min/entries/{entry_id}", response_model=MaxMinEntry)
+async def update_max_min_entry(entry_id: str, entry_data: MaxMinEntryCreate, current_user: User = Depends(get_current_user)):
+    existing_entry = await db.max_min_entries.find_one({"id": entry_id}, {"_id": 0})
+    if not existing_entry:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    
+    update_data = {
+        "data": entry_data.data,
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    # Also verify feeder_id and date if needed, but usually we trust the ID
+    # However, user might change date in the modal, which is tricky.
+    # Frontend sends date in body.
+    if existing_entry['date'] != entry_data.date:
+        # Check for conflict
+        conflict = await db.max_min_entries.find_one(
+            {"feeder_id": existing_entry['feeder_id'], "date": entry_data.date},
+            {"_id": 0}
+        )
+        if conflict:
+             raise HTTPException(status_code=400, detail="Entry for this date already exists")
+        update_data['date'] = entry_data.date
+
+    await db.max_min_entries.update_one(
+        {"id": entry_id},
+        {"$set": update_data}
+    )
+    
+    updated_entry = await db.max_min_entries.find_one({"id": entry_id}, {"_id": 0})
+    if isinstance(updated_entry.get('created_at'), str):
+        updated_entry['created_at'] = datetime.fromisoformat(updated_entry['created_at'])
+    if isinstance(updated_entry.get('updated_at'), str):
+        updated_entry['updated_at'] = datetime.fromisoformat(updated_entry['updated_at'])
+    return MaxMinEntry(**updated_entry)
 
 @api_router.delete("/max-min/entries/{entry_id}")
 async def delete_max_min_entry(entry_id: str, current_user: User = Depends(get_current_user)):
