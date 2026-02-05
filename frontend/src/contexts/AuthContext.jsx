@@ -58,8 +58,22 @@ export function AuthProvider({ children }) {
     return user;
   };
 
+  const signupRequest = async (email, password, full_name) => {
+    await axios.post(`${API}/auth/signup-request`, { email, password, full_name });
+  };
+
+  const signupVerify = async (email, otp) => {
+    const response = await axios.post(`${API}/auth/signup-verify`, { email, otp });
+    const { access_token, user } = response.data;
+    localStorage.setItem('token', access_token);
+    setToken(access_token);
+    setUser(user);
+    axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
+    return user;
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, signupRequest, signupVerify }}>
       {children}
     </AuthContext.Provider>
   );

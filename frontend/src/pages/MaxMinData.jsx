@@ -5,13 +5,25 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
- import { Calendar, Download, Plus, Edit, Trash2, RefreshCcw, Upload } from 'lucide-react';
+ import { Calendar, Download, Plus, Edit, Trash2, RefreshCcw, Upload, ChevronLeft, ChevronRight } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 import MaxMinEntryModal from '@/components/MaxMinEntryModal';
 import MaxMinAnalytics from '@/components/MaxMinAnalytics';
  import MaxMinImportPreviewModal from '@/components/MaxMinImportPreviewModal';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+
+const formatTime = (t) => {
+  if (!t) return '';
+  const str = String(t).trim();
+  if (str.includes(':')) {
+    const parts = str.split(':');
+    if (parts.length >= 2) {
+      return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}`;
+    }
+  }
+  return str;
+};
 
 const FEEDER_ORDER = [
   "Bus Voltages & Station Load",
@@ -524,21 +536,43 @@ export default function MaxMinData() {
               <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div>
               Select Feeder
             </label>
-            <Select
-              value={selectedFeeder?.id || ''}
-              onValueChange={handleFeederChange}
-            >
-              <SelectTrigger className="w-full h-12 text-lg border-slate-200 focus:ring-2 focus:ring-indigo-500/20 bg-slate-50/50 transition-all hover:bg-white">
-                <SelectValue placeholder="Select a feeder" />
-              </SelectTrigger>
-              <SelectContent className="max-h-[300px]">
-                {getSortedFeeders().map(feeder => (
-                  <SelectItem key={feeder.id} value={feeder.id} className="focus:bg-indigo-50 focus:text-indigo-700 py-3 cursor-pointer">
-                    {feeder.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={goToPrevFeeder}
+                disabled={!selectedFeeder}
+                title="Previous Feeder"
+                className="h-12 w-12 shrink-0"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </Button>
+              <Select
+                value={selectedFeeder?.id || ''}
+                onValueChange={handleFeederChange}
+              >
+                <SelectTrigger className="w-full h-12 text-lg border-slate-200 focus:ring-2 focus:ring-indigo-500/20 bg-slate-50/50 transition-all hover:bg-white">
+                  <SelectValue placeholder="Select a feeder" />
+                </SelectTrigger>
+                <SelectContent className="max-h-[300px]">
+                  {getSortedFeeders().map(feeder => (
+                    <SelectItem key={feeder.id} value={feeder.id} className="focus:bg-indigo-50 focus:text-indigo-700 py-3 cursor-pointer">
+                      {feeder.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={goToNextFeeder}
+                disabled={!selectedFeeder}
+                title="Next Feeder"
+                className="h-12 w-12 shrink-0"
+              >
+                <ChevronRight className="w-5 h-5" />
+              </Button>
+            </div>
         </CardContent>
       </Card>
 
@@ -617,14 +651,14 @@ export default function MaxMinData() {
                                         <>
                                             <TableCell className="border-l text-center">{getVal(entry.data, 'max_bus_voltage_400kv.value')}</TableCell>{/*
                                             */}<TableCell className="text-center">{getVal(entry.data, 'max_bus_voltage_220kv.value')}</TableCell>{/*
-                                            */}<TableCell className="text-center">{getVal(entry.data, 'max_bus_voltage.time') || getVal(entry.data, 'max_bus_voltage_400kv.time') || getVal(entry.data, 'max_bus_voltage_220kv.time')}</TableCell>{/*
+                                            */}<TableCell className="text-center">{formatTime(getVal(entry.data, 'max_bus_voltage.time') || getVal(entry.data, 'max_bus_voltage_400kv.time') || getVal(entry.data, 'max_bus_voltage_220kv.time'))}</TableCell>{/*
                                             
                                             */}<TableCell className="border-l text-center">{getVal(entry.data, 'min_bus_voltage_400kv.value')}</TableCell>{/*
                                             */}<TableCell className="text-center">{getVal(entry.data, 'min_bus_voltage_220kv.value')}</TableCell>{/*
-                                            */}<TableCell className="text-center">{getVal(entry.data, 'min_bus_voltage.time') || getVal(entry.data, 'min_bus_voltage_400kv.time') || getVal(entry.data, 'min_bus_voltage_220kv.time')}</TableCell>{/*
+                                            */}<TableCell className="text-center">{formatTime(getVal(entry.data, 'min_bus_voltage.time') || getVal(entry.data, 'min_bus_voltage_400kv.time') || getVal(entry.data, 'min_bus_voltage_220kv.time'))}</TableCell>{/*
                                             
                                             */}<TableCell className="border-l text-center">{getStationLoad(entry.date)?.max_mw || getVal(entry.data, 'station_load.max_mw')}</TableCell>{/*
-                                            */}<TableCell className="text-center">{getStationLoad(entry.date)?.time || getVal(entry.data, 'station_load.time')}</TableCell>{/*
+                                            */}<TableCell className="text-center">{formatTime(getStationLoad(entry.date)?.time || getVal(entry.data, 'station_load.time'))}</TableCell>{/*
                                             */}<TableCell className="text-center">{getStationLoad(entry.date)?.mvar || getVal(entry.data, 'station_load.mvar')}</TableCell>
                                         </>
                                     ) : (
@@ -632,12 +666,12 @@ export default function MaxMinData() {
                                             <TableCell className="border-l text-center">{getVal(entry.data, 'max.amps')}</TableCell>{/*
                                             */}<TableCell className="text-center">{getVal(entry.data, 'max.mw')}</TableCell>{/*
                                             */}{selectedFeeder.type === 'ict_feeder' && <TableCell className="text-center">{getVal(entry.data, 'max.mvar')}</TableCell>}{/*
-                                            */}<TableCell className="text-center">{getVal(entry.data, 'max.time')}</TableCell>{/*
+                                            */}<TableCell className="text-center">{formatTime(getVal(entry.data, 'max.time'))}</TableCell>{/*
                                             
                                             */}<TableCell className="border-l text-center">{getVal(entry.data, 'min.amps')}</TableCell>{/*
                                             */}<TableCell className="text-center">{getVal(entry.data, 'min.mw')}</TableCell>{/*
                                             */}{selectedFeeder.type === 'ict_feeder' && <TableCell className="text-center">{getVal(entry.data, 'min.mvar')}</TableCell>}{/*
-                                            */}<TableCell className="text-center">{getVal(entry.data, 'min.time')}</TableCell>{/*
+                                            */}<TableCell className="text-center">{formatTime(getVal(entry.data, 'min.time'))}</TableCell>{/*
                                             
                                             */}<TableCell className="border-l text-center">{getVal(entry.data, 'avg.amps')}</TableCell>{/*
                                             */}<TableCell className="text-center">{getVal(entry.data, 'avg.mw')}</TableCell>
@@ -825,25 +859,25 @@ function SummaryTable({ entries, selectedFeeder, year, month, getStationLoad }) 
                                             <TableCell className="font-medium text-slate-600 text-center">400KV Bus Voltage</TableCell>
                                             <TableCell className="border-l text-center font-medium text-rose-600">{max400Val === -Infinity ? '-' : max400Val}</TableCell>
                                             <TableCell className="text-center text-slate-500">{formatDate(finalMax400.date)}</TableCell>
-                                            <TableCell className="text-center text-slate-500">{finalMax400.time}</TableCell>
+                                            <TableCell className="text-center text-slate-500">{formatTime(finalMax400.time)}</TableCell>
                                             <TableCell className="border-l text-center font-medium text-blue-600">{min400Val === Infinity ? '-' : min400Val}</TableCell>
                                             <TableCell className="text-center text-slate-500">{formatDate(finalMin400.date)}</TableCell>
-                                            <TableCell className="text-center text-slate-500">{finalMin400.time}</TableCell>
+                                            <TableCell className="text-center text-slate-500">{formatTime(finalMin400.time)}</TableCell>
                                         </TableRow>
                                         <TableRow key={`${p.name}-220`} className="hover:bg-slate-50/50">
                                             <TableCell className="font-medium text-slate-600 text-center">220KV Bus Voltage</TableCell>
                                             <TableCell className="border-l text-center font-medium text-rose-600">{max220Val === -Infinity ? '-' : max220Val}</TableCell>
                                             <TableCell className="text-center text-slate-500">{formatDate(finalMax220.date)}</TableCell>
-                                            <TableCell className="text-center text-slate-500">{finalMax220.time}</TableCell>
+                                            <TableCell className="text-center text-slate-500">{formatTime(finalMax220.time)}</TableCell>
                                             <TableCell className="border-l text-center font-medium text-blue-600">{min220Val === Infinity ? '-' : min220Val}</TableCell>
                                             <TableCell className="text-center text-slate-500">{formatDate(finalMin220.date)}</TableCell>
-                                            <TableCell className="text-center text-slate-500">{finalMin220.time}</TableCell>
+                                            <TableCell className="text-center text-slate-500">{formatTime(finalMin220.time)}</TableCell>
                                         </TableRow>
                                         <TableRow key={`${p.name}-load`} className="hover:bg-slate-50/50 border-b border-slate-100">
                                             <TableCell className="font-medium text-slate-600 text-center">Station Load (MW)</TableCell>
                                             <TableCell className="border-l text-center font-medium text-rose-600">{maxLoadVal === -Infinity ? '-' : maxLoadVal}</TableCell>
                                             <TableCell className="text-center text-slate-500">{formatDate(maxLoadEntry.date)}</TableCell>
-                                            <TableCell className="text-center text-slate-500">{maxLoadEntry.time}</TableCell>
+                                            <TableCell className="text-center text-slate-500">{formatTime(maxLoadEntry.time)}</TableCell>
                                             <TableCell colSpan={3} className="border-l text-center text-muted-foreground">-</TableCell>
                                         </TableRow>
                                     </Fragment>
@@ -968,20 +1002,20 @@ function SummaryTable({ entries, selectedFeeder, year, month, getStationLoad }) 
                                             <TableCell className="font-medium text-slate-600 text-center">Amps</TableCell>
                                             <TableCell className="border-l text-center font-medium text-rose-600">{maxAmps === -Infinity ? '-' : maxAmps}</TableCell>
                                             <TableCell className="text-center text-slate-500">{formatDate(maxAmpsDate)}</TableCell>
-                                            <TableCell className="text-center text-slate-500">{maxAmpsTime || '-'}</TableCell>
+                                            <TableCell className="text-center text-slate-500">{formatTime(maxAmpsTime)}</TableCell>
                                             <TableCell className="border-l text-center font-medium text-blue-600">{minAmps === Infinity ? '-' : minAmps}</TableCell>
                                             <TableCell className="text-center text-slate-500">{formatDate(minAmpsDate)}</TableCell>
-                                            <TableCell className="text-center text-slate-500">{minAmpsTime || '-'}</TableCell>
+                                            <TableCell className="text-center text-slate-500">{formatTime(minAmpsTime)}</TableCell>
                                             <TableCell className="border-l text-center font-bold text-emerald-600">{avgAmps}</TableCell>
                                         </TableRow>
                                         <TableRow key={`${p.name}-mw`} className="hover:bg-slate-50/50 border-b border-slate-100">
                                             <TableCell className="font-medium text-slate-600 text-center">MW</TableCell>
                                             <TableCell className="border-l text-center font-medium text-rose-600">{maxMW === -Infinity ? '-' : maxMW}</TableCell>
                                             <TableCell className="text-center text-slate-500">{formatDate(maxMWDate)}</TableCell>
-                                            <TableCell className="text-center text-slate-500">{maxMWTime || '-'}</TableCell>
+                                            <TableCell className="text-center text-slate-500">{formatTime(maxMWTime)}</TableCell>
                                             <TableCell className="border-l text-center font-medium text-blue-600">{minMW === Infinity ? '-' : minMW}</TableCell>
                                             <TableCell className="text-center text-slate-500">{formatDate(minMWDate)}</TableCell>
-                                            <TableCell className="text-center text-slate-500">{minMWTime || '-'}</TableCell>
+                                            <TableCell className="text-center text-slate-500">{formatTime(minMWTime)}</TableCell>
                                             <TableCell className="border-l text-center font-bold text-emerald-600">{avgMW}</TableCell>
                                         </TableRow>
                                     </Fragment>

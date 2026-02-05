@@ -14,6 +14,11 @@ from datetime import datetime, timezone, timedelta
 from passlib.context import CryptContext
 import jwt
 import io
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import random
+import string
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl import load_workbook
@@ -29,8 +34,66 @@ def format_date(date_str):
         pass
     return date_str
 
+def format_time(time_str):
+    if not time_str:
+        return ""
+    time_str = str(time_str).strip()
+    try:
+        if ':' in time_str:
+            parts = time_str.split(':')
+            if len(parts) >= 2:
+                return f"{parts[0].zfill(2)}:{parts[1].zfill(2)}"
+    except:
+        pass
+    return time_str
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
+
+def send_otp_email(user_email: str, otp: str, reason: str = "reset"):
+    sender_email = os.environ.get("SMTP_EMAIL")
+    sender_password = os.environ.get("SMTP_PASSWORD")
+    # Admin email is same as sender in this requirement
+    admin_email = sender_email 
+    
+    message = MIMEMultipart("alternative")
+    message["From"] = sender_email
+    message["To"] = admin_email
+
+    if reason == "signup":
+        message["Subject"] = "New Account Signup OTP Request"
+        action_text = "new account signup"
+    else:
+        message["Subject"] = "Password Reset OTP Request"
+        action_text = "password reset"
+
+    text = f"""\
+    A {action_text} was requested for user: {user_email}.
+    Your OTP is: {otp}
+    """
+    html = f"""\
+    <html>
+      <body>
+        <h2>{message["Subject"]}</h2>
+        <p>A {action_text} was requested for user: <b>{user_email}</b>.</p>
+        <p>Your OTP is: <b style="font-size: 24px;">{otp}</b></p>
+        <p>Please approve this request by sharing the OTP with the user if appropriate.</p>
+      </body>
+    </html>
+    """
+
+    part1 = MIMEText(text, "plain")
+    part2 = MIMEText(html, "html")
+    message.attach(part1)
+    message.attach(part2)
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, admin_email, message.as_string())
+    except Exception as e:
+        print(f"Error sending email: {e}")
+        raise HTTPException(status_code=500, detail="Failed to send OTP email")
 
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
@@ -72,6 +135,18 @@ class UserRegister(BaseModel):
 class UserLogin(BaseModel):
     email: str
     password: str
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    otp: str
+    new_password: str
+
+class SignupVerifyRequest(BaseModel):
+    email: str
+    otp: str
 
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -264,6 +339,117 @@ async def login(user_data: UserLogin):
     
     user_response = User(**user)
     access_token = create_access_token(data={"sub": user['id']})
+    
+    return Token(access_token=access_token, token_type="bearer", user=user_response)
+
+@api_router.post("/auth/forgot-password")
+async def forgot_password(request: ForgotPasswordRequest):
+    user = await db.users.find_one({"email": request.email})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    otp = ''.join(random.choices(string.digits, k=6))
+    # Save OTP with expiry (15 mins)
+    await db.password_resets.update_one(
+        {"email": request.email},
+        {"$set": {"otp": otp, "expires_at": datetime.now(timezone.utc) + timedelta(minutes=15)}},
+        upsert=True
+    )
+    
+    # Send to admin
+    send_otp_email(request.email, otp)
+    
+    return {"message": "OTP sent to admin for approval"}
+
+@api_router.post("/auth/reset-password")
+async def reset_password(request: ResetPasswordRequest):
+    record = await db.password_resets.find_one({"email": request.email})
+    if not record:
+        raise HTTPException(status_code=400, detail="Invalid request")
+        
+    if record["otp"] != request.otp:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+        
+    # Handle both naive and aware datetime for expires_at
+    expires_at = record["expires_at"]
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+        
+    if expires_at < datetime.now(timezone.utc):
+         raise HTTPException(status_code=400, detail="OTP expired")
+         
+    # Update password
+    hashed_password = get_password_hash(request.new_password)
+    await db.users.update_one(
+        {"email": request.email},
+        {"$set": {"hashed_password": hashed_password}}
+    )
+    
+    # Delete OTP
+    await db.password_resets.delete_one({"email": request.email})
+    
+    return {"message": "Password reset successful"}
+
+@api_router.post("/auth/signup-request")
+async def signup_request(user_data: UserRegister):
+    existing_user = await db.users.find_one({"email": user_data.email})
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    otp = ''.join(random.choices(string.digits, k=6))
+    hashed_password = get_password_hash(user_data.password)
+    
+    request_data = {
+        "email": user_data.email,
+        "full_name": user_data.full_name,
+        "hashed_password": hashed_password,
+        "otp": otp,
+        "expires_at": datetime.now(timezone.utc) + timedelta(minutes=15),
+        "created_at": datetime.now(timezone.utc)
+    }
+    
+    await db.signup_requests.update_one(
+        {"email": user_data.email},
+        {"$set": request_data},
+        upsert=True
+    )
+    
+    send_otp_email(user_data.email, otp, reason="signup")
+    
+    return {"message": "OTP sent to admin for approval"}
+
+@api_router.post("/auth/signup-verify", response_model=Token)
+async def signup_verify(request: SignupVerifyRequest):
+    record = await db.signup_requests.find_one({"email": request.email})
+    if not record:
+        raise HTTPException(status_code=400, detail="Invalid request or expired")
+        
+    if record["otp"] != request.otp:
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+        
+    expires_at = record["expires_at"]
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+        
+    if expires_at < datetime.now(timezone.utc):
+         raise HTTPException(status_code=400, detail="OTP expired")
+    
+    # Create user
+    user_obj = UserInDB(
+        email=record["email"],
+        full_name=record["full_name"],
+        hashed_password=record["hashed_password"]
+    )
+    
+    doc = user_obj.model_dump()
+    doc['created_at'] = doc['created_at'].isoformat()
+    await db.users.insert_one(doc)
+    
+    # Delete request
+    await db.signup_requests.delete_one({"email": request.email})
+    
+    user_response = User(id=user_obj.id, email=user_obj.email, full_name=user_obj.full_name, created_at=user_obj.created_at)
+    access_token = create_access_token(data={"sub": user_obj.id})
     
     return Token(access_token=access_token, token_type="bearer", user=user_response)
 
@@ -1519,22 +1705,22 @@ async def export_max_min_data(
         
         if feeder['type'] == 'bus_station':
             row.extend([
-                d.get('max_bus_voltage_400kv', {}).get('value', ''), d.get('max_bus_voltage_400kv', {}).get('time', ''),
-                d.get('max_bus_voltage_220kv', {}).get('value', ''), d.get('max_bus_voltage_220kv', {}).get('time', ''),
-                d.get('min_bus_voltage_400kv', {}).get('value', ''), d.get('min_bus_voltage_400kv', {}).get('time', ''),
-                d.get('min_bus_voltage_220kv', {}).get('value', ''), d.get('min_bus_voltage_220kv', {}).get('time', ''),
-                d.get('station_load', {}).get('max_mw', ''), d.get('station_load', {}).get('mvar', ''), d.get('station_load', {}).get('time', '')
+                d.get('max_bus_voltage_400kv', {}).get('value', ''), format_time(d.get('max_bus_voltage_400kv', {}).get('time', '')),
+                d.get('max_bus_voltage_220kv', {}).get('value', ''), format_time(d.get('max_bus_voltage_220kv', {}).get('time', '')),
+                d.get('min_bus_voltage_400kv', {}).get('value', ''), format_time(d.get('min_bus_voltage_400kv', {}).get('time', '')),
+                d.get('min_bus_voltage_220kv', {}).get('value', ''), format_time(d.get('min_bus_voltage_220kv', {}).get('time', '')),
+                d.get('station_load', {}).get('max_mw', ''), d.get('station_load', {}).get('mvar', ''), format_time(d.get('station_load', {}).get('time', ''))
             ])
         elif feeder['type'] == 'ict_feeder':
             row.extend([
-                d.get('max', {}).get('amps', ''), d.get('max', {}).get('mw', ''), d.get('max', {}).get('mvar', ''), d.get('max', {}).get('time', ''),
-                d.get('min', {}).get('amps', ''), d.get('min', {}).get('mw', ''), d.get('min', {}).get('mvar', ''), d.get('min', {}).get('time', ''),
+                d.get('max', {}).get('amps', ''), d.get('max', {}).get('mw', ''), d.get('max', {}).get('mvar', ''), format_time(d.get('max', {}).get('time', '')),
+                d.get('min', {}).get('amps', ''), d.get('min', {}).get('mw', ''), d.get('min', {}).get('mvar', ''), format_time(d.get('min', {}).get('time', '')),
                 d.get('avg', {}).get('amps', ''), d.get('avg', {}).get('mw', '')
             ])
         else:
             row.extend([
-                d.get('max', {}).get('amps', ''), d.get('max', {}).get('mw', ''), d.get('max', {}).get('time', ''),
-                d.get('min', {}).get('amps', ''), d.get('min', {}).get('mw', ''), d.get('min', {}).get('time', ''),
+                d.get('max', {}).get('amps', ''), d.get('max', {}).get('mw', ''), format_time(d.get('max', {}).get('time', '')),
+                d.get('min', {}).get('amps', ''), d.get('min', {}).get('mw', ''), format_time(d.get('min', {}).get('time', '')),
                 d.get('avg', {}).get('amps', ''), d.get('avg', {}).get('mw', '')
             ])
         ws.append(row)
@@ -1571,6 +1757,16 @@ async def export_max_min_data(
             return float(val)
         except (ValueError, TypeError):
             return None
+            
+    # Helper to format time (slice first 5 chars)
+    def format_time(t):
+        if not t:
+            return ''
+        s = str(t).strip()
+        # Truncate to hh:mm if it looks like a time string
+        if len(s) >= 5 and ':' in s:
+            return s[:5]
+        return s
 
     # Helper to calculate stats for a period
     def calculate_period_stats(period_entries, feeder_type):
@@ -1814,9 +2010,9 @@ async def export_max_min_data(
         if feeder['type'] == 'bus_station':
             # Rows: 400KV, 220KV, Station Load
             rows_data = [
-                ("400KV Bus Voltage", stats['max_400kv'], format_date(stats['max_400kv_date']), stats['max_400kv_time'], stats['min_400kv'], format_date(stats['min_400kv_date']), stats['min_400kv_time']),
-                ("220KV Bus Voltage", stats['max_220kv'], format_date(stats['max_220kv_date']), stats['max_220kv_time'], stats['min_220kv'], format_date(stats['min_220kv_date']), stats['min_220kv_time']),
-                ("Station Load (MW)", stats['max_load'], format_date(stats['max_load_date']), stats['max_load_time'], "-", "-", "-")
+                ("400KV Bus Voltage", stats['max_400kv'], format_date(stats['max_400kv_date']), format_time(stats['max_400kv_time']), stats['min_400kv'], format_date(stats['min_400kv_date']), format_time(stats['min_400kv_time'])),
+                ("220KV Bus Voltage", stats['max_220kv'], format_date(stats['max_220kv_date']), format_time(stats['max_220kv_time']), stats['min_220kv'], format_date(stats['min_220kv_date']), format_time(stats['min_220kv_time'])),
+                ("Station Load (MW)", stats['max_load'], format_date(stats['max_load_date']), format_time(stats['max_load_time']), "-", "-", "-")
             ]
             
             # Merge Period Cell
@@ -1848,8 +2044,8 @@ async def export_max_min_data(
         else:
             # Rows: Amps, MW
             rows_data = [
-                ("Amps", stats['max_amps'], format_date(stats['max_amps_date']), stats['max_amps_time'], stats['min_amps'], format_date(stats['min_amps_date']), stats['min_amps_time'], stats['avg_amps']),
-                ("MW", stats['max_mw'], format_date(stats['max_mw_date']), stats['max_mw_time'], stats['min_mw'], format_date(stats['min_mw_date']), stats['min_mw_time'], stats['avg_mw'])
+                ("Amps", stats['max_amps'], format_date(stats['max_amps_date']), format_time(stats['max_amps_time']), stats['min_amps'], format_date(stats['min_amps_date']), format_time(stats['min_amps_time']), stats['avg_amps']),
+                ("MW", stats['max_mw'], format_date(stats['max_mw_date']), format_time(stats['max_mw_time']), stats['min_mw'], format_date(stats['min_mw_date']), format_time(stats['min_mw_time']), stats['avg_mw'])
             ]
             
             # Merge Period Cell
@@ -2333,22 +2529,22 @@ async def export_all_max_min_data(
             row_data = [format_date(entry['date'])]
             if feeder['type'] == 'bus_station':
                 row_data.extend([
-                    d.get('max_bus_voltage_400kv', {}).get('value', ''), d.get('max_bus_voltage_400kv', {}).get('time', ''),
-                    d.get('max_bus_voltage_220kv', {}).get('value', ''), d.get('max_bus_voltage_220kv', {}).get('time', ''),
-                    d.get('min_bus_voltage_400kv', {}).get('value', ''), d.get('min_bus_voltage_400kv', {}).get('time', ''),
-                    d.get('min_bus_voltage_220kv', {}).get('value', ''), d.get('min_bus_voltage_220kv', {}).get('time', ''),
-                    d.get('station_load', {}).get('max_mw', ''), d.get('station_load', {}).get('mvar', ''), d.get('station_load', {}).get('time', '')
+                    d.get('max_bus_voltage_400kv', {}).get('value', ''), format_time(d.get('max_bus_voltage_400kv', {}).get('time', '')),
+                    d.get('max_bus_voltage_220kv', {}).get('value', ''), format_time(d.get('max_bus_voltage_220kv', {}).get('time', '')),
+                    d.get('min_bus_voltage_400kv', {}).get('value', ''), format_time(d.get('min_bus_voltage_400kv', {}).get('time', '')),
+                    d.get('min_bus_voltage_220kv', {}).get('value', ''), format_time(d.get('min_bus_voltage_220kv', {}).get('time', '')),
+                    d.get('station_load', {}).get('max_mw', ''), d.get('station_load', {}).get('mvar', ''), format_time(d.get('station_load', {}).get('time', ''))
                 ])
             elif feeder['type'] == 'ict_feeder':
                 row_data.extend([
-                    d.get('max', {}).get('amps', ''), d.get('max', {}).get('mw', ''), d.get('max', {}).get('mvar', ''), d.get('max', {}).get('time', ''),
-                    d.get('min', {}).get('amps', ''), d.get('min', {}).get('mw', ''), d.get('min', {}).get('mvar', ''), d.get('min', {}).get('time', ''),
+                    d.get('max', {}).get('amps', ''), d.get('max', {}).get('mw', ''), d.get('max', {}).get('mvar', ''), format_time(d.get('max', {}).get('time', '')),
+                    d.get('min', {}).get('amps', ''), d.get('min', {}).get('mw', ''), d.get('min', {}).get('mvar', ''), format_time(d.get('min', {}).get('time', '')),
                     d.get('avg', {}).get('amps', ''), d.get('avg', {}).get('mw', '')
                 ])
             else:
                 row_data.extend([
-                    d.get('max', {}).get('amps', ''), d.get('max', {}).get('mw', ''), d.get('max', {}).get('time', ''),
-                    d.get('min', {}).get('amps', ''), d.get('min', {}).get('mw', ''), d.get('min', {}).get('time', ''),
+                    d.get('max', {}).get('amps', ''), d.get('max', {}).get('mw', ''), format_time(d.get('max', {}).get('time', '')),
+                    d.get('min', {}).get('amps', ''), d.get('min', {}).get('mw', ''), format_time(d.get('min', {}).get('time', '')),
                     d.get('avg', {}).get('amps', ''), d.get('avg', {}).get('mw', '')
                 ])
             
@@ -2382,11 +2578,11 @@ async def export_all_max_min_data(
                 # Write stats rows
                 labels = ["Max 400KV", "Min 400KV", "Max 220KV", "Min 220KV", "Max Load"]
                 vals = [
-                    (stats['max_400kv'], format_date(stats['max_400kv_date']), stats['max_400kv_time']),
-                    (stats['min_400kv'], format_date(stats['min_400kv_date']), stats['min_400kv_time']),
-                    (stats['max_220kv'], format_date(stats['max_220kv_date']), stats['max_220kv_time']),
-                    (stats['min_220kv'], format_date(stats['min_220kv_date']), stats['min_220kv_time']),
-                    (stats['max_load'], format_date(stats['max_load_date']), stats['max_load_time'])
+                    (stats['max_400kv'], format_date(stats['max_400kv_date']), format_time(stats['max_400kv_time'])),
+                    (stats['min_400kv'], format_date(stats['min_400kv_date']), format_time(stats['min_400kv_time'])),
+                    (stats['max_220kv'], format_date(stats['max_220kv_date']), format_time(stats['max_220kv_time'])),
+                    (stats['min_220kv'], format_date(stats['min_220kv_date']), format_time(stats['min_220kv_time'])),
+                    (stats['max_load'], format_date(stats['max_load_date']), format_time(stats['max_load_time']))
                 ]
                 for label, val_tuple in zip(labels, vals):
                     ws.cell(row=row_idx, column=current_col, value=label).border = thin_border
@@ -2397,10 +2593,10 @@ async def export_all_max_min_data(
             else:
                 labels = ["Max Amps", "Min Amps", "Max MW", "Min MW"]
                 vals = [
-                    (stats['max_amps'], format_date(stats['max_amps_date']), stats['max_amps_time']),
-                    (stats['min_amps'], format_date(stats['min_amps_date']), stats['min_amps_time']),
-                    (stats['max_mw'], format_date(stats['max_mw_date']), stats['max_mw_time']),
-                    (stats['min_mw'], format_date(stats['min_mw_date']), stats['min_mw_time'])
+                    (stats['max_amps'], format_date(stats['max_amps_date']), format_time(stats['max_amps_time'])),
+                    (stats['min_amps'], format_date(stats['min_amps_date']), format_time(stats['min_amps_time'])),
+                    (stats['max_mw'], format_date(stats['max_mw_date']), format_time(stats['max_mw_time'])),
+                    (stats['min_mw'], format_date(stats['min_mw_date']), format_time(stats['min_mw_time']))
                 ]
                 for label, val_tuple in zip(labels, vals):
                     ws.cell(row=row_idx, column=current_col, value=label).border = thin_border

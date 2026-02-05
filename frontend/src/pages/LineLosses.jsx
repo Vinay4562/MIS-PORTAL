@@ -8,7 +8,7 @@ import DataEntryModal from '@/components/DataEntryModal';
 import ImportPreviewModal from '@/components/ImportPreviewModal';
 import FeederTable from '@/components/FeederTable';
 import AnalyticsCharts from '@/components/AnalyticsCharts';
-import { Download, Plus, Calendar, RefreshCcw, Upload } from 'lucide-react';
+import { Download, Plus, Calendar, RefreshCcw, Upload, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -392,24 +392,44 @@ export default function LineLosses() {
         <label className="text-sm font-medium mb-2 block text-slate-600 dark:text-slate-400">
           Select Feeder
         </label>
-        <Select
-          value={selectedFeeder?.id || ''}
-          onValueChange={(value) => {
-            const feeder = feeders.find(f => f.id === value);
-            if (feeder) handleFeederChange(feeder);
-          }}
-        >
-          <SelectTrigger className="w-full">
-            <SelectValue placeholder="Select a feeder" />
-          </SelectTrigger>
-          <SelectContent className="max-h-[300px]">
-            {getSortedFeeders().map(feeder => (
-              <SelectItem key={feeder.id} value={feeder.id}>
-                {feeder.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={goToPrevFeeder}
+            disabled={!selectedFeeder}
+            title="Previous Feeder"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </Button>
+          <Select
+            value={selectedFeeder?.id || ''}
+            onValueChange={(value) => {
+              const feeder = feeders.find(f => f.id === value);
+              if (feeder) handleFeederChange(feeder);
+            }}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select a feeder" />
+            </SelectTrigger>
+            <SelectContent className="max-h-[300px]">
+              {getSortedFeeders().map(feeder => (
+                <SelectItem key={feeder.id} value={feeder.id}>
+                  {feeder.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={goToNextFeeder}
+            disabled={!selectedFeeder}
+            title="Next Feeder"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </Button>
+        </div>
       </div>
 
       {/* Data Table */}

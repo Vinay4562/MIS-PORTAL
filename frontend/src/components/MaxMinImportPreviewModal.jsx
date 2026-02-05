@@ -5,6 +5,18 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
  
 export default function MaxMinImportPreviewModal({ isOpen, onClose, data, feederType, onConfirm, loading }) {
+  const formatTime = (t) => {
+    if (!t) return '';
+    const str = String(t).trim();
+    if (str.includes(':')) {
+      const parts = str.split(':');
+      if (parts.length >= 2) {
+        return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}`;
+      }
+    }
+    return str;
+  };
+
   const renderHeaders = () => {
     if (feederType === 'bus_station') {
       return (
@@ -67,12 +79,12 @@ export default function MaxMinImportPreviewModal({ isOpen, onClose, data, feeder
           <TableCell>{row.date}</TableCell>
           <TableCell>{d.max_bus_voltage_400kv?.value ?? ''}</TableCell>
           <TableCell>{d.max_bus_voltage_220kv?.value ?? ''}</TableCell>
-          <TableCell>{maxTime}</TableCell>
+          <TableCell>{formatTime(maxTime)}</TableCell>
           <TableCell>{d.min_bus_voltage_400kv?.value ?? ''}</TableCell>
           <TableCell>{d.min_bus_voltage_220kv?.value ?? ''}</TableCell>
-          <TableCell>{minTime}</TableCell>
+          <TableCell>{formatTime(minTime)}</TableCell>
           <TableCell>{d.station_load?.max_mw ?? ''}</TableCell>
-          <TableCell>{d.station_load?.time ?? ''}</TableCell>
+          <TableCell>{formatTime(d.station_load?.time)}</TableCell>
           <TableCell>{d.station_load?.mvar ?? ''}</TableCell>
           <TableCell>{row.exists ? <span className="text-yellow-600 font-medium text-xs">Existing</span> : <span className="text-green-600 font-medium text-xs">New</span>}</TableCell>
         </TableRow>
@@ -85,11 +97,11 @@ export default function MaxMinImportPreviewModal({ isOpen, onClose, data, feeder
           <TableCell>{d.max?.amps ?? ''}</TableCell>
           <TableCell>{d.max?.mw ?? ''}</TableCell>
           <TableCell>{d.max?.mvar ?? ''}</TableCell>
-          <TableCell>{d.max?.time ?? ''}</TableCell>
+          <TableCell>{formatTime(d.max?.time)}</TableCell>
           <TableCell>{d.min?.amps ?? ''}</TableCell>
           <TableCell>{d.min?.mw ?? ''}</TableCell>
           <TableCell>{d.min?.mvar ?? ''}</TableCell>
-          <TableCell>{d.min?.time ?? ''}</TableCell>
+          <TableCell>{formatTime(d.min?.time)}</TableCell>
           <TableCell>{d.avg?.amps ?? ''}</TableCell>
           <TableCell>{d.avg?.mw ?? ''}</TableCell>
           <TableCell>{row.exists ? <span className="text-yellow-600 font-medium text-xs">Existing</span> : <span className="text-green-600 font-medium text-xs">New</span>}</TableCell>
@@ -101,10 +113,10 @@ export default function MaxMinImportPreviewModal({ isOpen, onClose, data, feeder
         <TableCell>{row.date}</TableCell>
         <TableCell>{d.max?.amps ?? ''}</TableCell>
         <TableCell>{d.max?.mw ?? ''}</TableCell>
-        <TableCell>{d.max?.time ?? ''}</TableCell>
+        <TableCell>{formatTime(d.max?.time)}</TableCell>
         <TableCell>{d.min?.amps ?? ''}</TableCell>
         <TableCell>{d.min?.mw ?? ''}</TableCell>
-        <TableCell>{d.min?.time ?? ''}</TableCell>
+        <TableCell>{formatTime(d.min?.time)}</TableCell>
         <TableCell>{d.avg?.amps ?? ''}</TableCell>
         <TableCell>{d.avg?.mw ?? ''}</TableCell>
         <TableCell>{row.exists ? <span className="text-yellow-600 font-medium text-xs">Existing</span> : <span className="text-green-600 font-medium text-xs">New</span>}</TableCell>

@@ -3,7 +3,15 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/components/ThemeProvider';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { Menu, Zap, LogOut, Sun, Moon, TrendingDown, Activity, Maximize2, BarChart2 } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Menu, Zap, LogOut, Sun, Moon, TrendingDown, Activity, Maximize2, BarChart2, CircleUser, User } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 export default function DashboardLayout({ children }) {
@@ -88,10 +96,19 @@ export default function DashboardLayout({ children }) {
         </button>
       </nav>
 
-      <div className="p-4 border-t border-slate-200 dark:border-slate-700 space-y-2">
-        <div className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400">
-          <p className="font-medium truncate">{user?.full_name}</p>
-          <p className="text-xs truncate">{user?.email}</p>
+      <div className="p-4 border-t border-slate-200 dark:border-slate-700">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold">
+            {user?.full_name?.charAt(0) || 'U'}
+          </div>
+          <div className="overflow-hidden">
+            <p className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">
+              {user?.full_name}
+            </p>
+            <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+              {user?.email}
+            </p>
+          </div>
         </div>
       </div>
     </div>
@@ -125,25 +142,28 @@ export default function DashboardLayout({ children }) {
             </Sheet>
 
             <div className="flex items-center gap-3 ml-auto">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={toggleTheme}
-                data-testid="theme-toggle"
-              >
-                {theme === 'light' ? <Moon className="w-5 h-5" /> : <Sun className="w-5 h-5" />}
-              </Button>
-              
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleLogout}
-                data-testid="logout-button"
-                className="gap-2"
-              >
-                <LogOut className="w-4 h-4" />
-                Logout
-              </Button>
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-200 hidden md:inline-block">
+                {user?.full_name}
+              </span>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="rounded-full">
+                    <CircleUser className="w-6 h-6 text-slate-700 dark:text-slate-200" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuLabel>My Account</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={toggleTheme} className="cursor-pointer">
+                    {theme === 'light' ? <Moon className="w-4 h-4 mr-2" /> : <Sun className="w-4 h-4 mr-2" />}
+                    <span>Toggle Theme</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleLogout} className="cursor-pointer text-red-600 focus:text-red-600">
+                    <LogOut className="w-4 h-4 mr-2" />
+                    <span>Logout</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
         </header>

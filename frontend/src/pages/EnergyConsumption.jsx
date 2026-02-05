@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Download, Plus, Activity, Calendar, RefreshCcw, Upload } from 'lucide-react';
+import { Download, Plus, Activity, Calendar, RefreshCcw, Upload, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -353,24 +353,44 @@ export default function EnergyConsumption() {
         <label className="text-sm font-medium mb-2 block text-slate-600 dark:text-slate-400">
           Select Sheet
         </label>
-        <Select
-          value={selectedSheet?.id || ''}
-          onValueChange={(value) => {
-              const sheet = sheets.find(s => s.id === value);
-              if (sheet) handleSheetChange(sheet);
-          }}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="Select sheet" />
-          </SelectTrigger>
-          <SelectContent>
-            {sheets.map(sheet => (
-              <SelectItem key={sheet.id} value={sheet.id}>
-                {sheet.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-2">
+            <Button
+                variant="outline"
+                size="icon"
+                onClick={goToPrevSheet}
+                disabled={!selectedSheet}
+                title="Previous Sheet"
+            >
+                <ChevronLeft className="w-4 h-4" />
+            </Button>
+            <Select
+            value={selectedSheet?.id || ''}
+            onValueChange={(value) => {
+                const sheet = sheets.find(s => s.id === value);
+                if (sheet) handleSheetChange(sheet);
+            }}
+            >
+            <SelectTrigger>
+                <SelectValue placeholder="Select sheet" />
+            </SelectTrigger>
+            <SelectContent>
+                {sheets.map(sheet => (
+                <SelectItem key={sheet.id} value={sheet.id}>
+                    {sheet.name}
+                </SelectItem>
+                ))}
+            </SelectContent>
+            </Select>
+            <Button
+                variant="outline"
+                size="icon"
+                onClick={goToNextSheet}
+                disabled={!selectedSheet}
+                title="Next Sheet"
+            >
+                <ChevronRight className="w-4 h-4" />
+            </Button>
+        </div>
       </div>
 
       {/* Data Table */}

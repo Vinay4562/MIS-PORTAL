@@ -3,6 +3,7 @@ import { ThemeProvider } from '@/components/ThemeProvider';
 import { Toaster } from '@/components/ui/sonner';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import LoginPage from '@/pages/LoginPage';
+import ForgotPassword from '@/pages/ForgotPassword';
 import DashboardHome from '@/pages/DashboardHome';
 import LineLosses from '@/pages/LineLosses';
 import EnergyConsumption from '@/pages/EnergyConsumption';
@@ -31,6 +32,7 @@ function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/" element={
               <ProtectedRoute>
                 <DashboardLayout>
