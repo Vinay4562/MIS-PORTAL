@@ -4,7 +4,10 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Download, Plus, Activity, Calendar, RefreshCcw } from 'lucide-react';
+import { Download, Plus, Activity, Calendar, RefreshCcw, Upload } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import EnergyTable from '@/components/EnergyTable';
 import EnergyEntryModal from '@/components/EnergyEntryModal';
 import EnergyAnalytics from '@/components/EnergyAnalytics';
@@ -22,6 +25,8 @@ export default function EnergyConsumption() {
   const [loading, setLoading] = useState(false);
   const [initialized, setInitialized] = useState(false);
   const [editingEntry, setEditingEntry] = useState(null);
+  const [importPreviewOpen, setImportPreviewOpen] = useState(false);
+  const [importData, setImportData] = useState([]);
 
   useEffect(() => {
     initializeModule();
@@ -137,6 +142,51 @@ export default function EnergyConsumption() {
         toast.error('Failed to delete entry');
     }
   };
+  
+  const handleImportClick = () => {
+    if (!selectedSheet) return;
+    document.getElementById('energy-import-input')?.click();
+  };
+  
+  const handleFileSelect = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file || !selectedSheet) return;
+    event.target.value = '';
+    const formData = new FormData();
+    formData.append('file', file);
+    setLoading(true);
+    try {
+      const response = await axios.post(`${API}/energy/preview-import/${selectedSheet.id}`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      setImportData(response.data);
+      setImportPreviewOpen(true);
+    } catch (error) {
+      console.error('Import preview failed:', error);
+      toast.error(error.response?.data?.detail || 'Failed to preview import');
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  const handleImportConfirm = async () => {
+    if (!selectedSheet) return;
+    setLoading(true);
+    try {
+      await axios.post(`${API}/energy/import-entries`, {
+        sheet_id: selectedSheet.id,
+        entries: importData
+      });
+      toast.success('Data imported successfully');
+      setImportPreviewOpen(false);
+      fetchEntries(selectedSheet.id, year, month);
+    } catch (error) {
+      console.error('Import failed:', error);
+      toast.error('Failed to import data');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const monthNames = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -240,6 +290,15 @@ export default function EnergyConsumption() {
               Entry
             </Button>
             <Button 
+                variant="outline" 
+                onClick={handleImportClick}
+                disabled={!selectedSheet}
+                className="flex-1 lg:flex-none"
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              Import
+            </Button>
+            <Button 
                 variant="secondary" 
                 onClick={handleExport} 
                 disabled={!selectedSheet || entries.length === 0}
@@ -248,6 +307,13 @@ export default function EnergyConsumption() {
               <Download className="w-4 h-4 mr-2" />
               Export
             </Button>
+            <input 
+              id="energy-import-input"
+              type="file" 
+              onChange={handleFileSelect}
+              className="hidden"
+              accept=".xlsx,.xls"
+            />
         </div>
       </div>
 
@@ -317,6 +383,65 @@ export default function EnergyConsumption() {
       
       {selectedSheet && entries.length > 0 && (
         <EnergyAnalytics entries={entries} sheet={selectedSheet} />
+      )}
+      
+      {importPreviewOpen && selectedSheet && (
+        <Dialog open={importPreviewOpen} onOpenChange={() => setImportPreviewOpen(false)}>
+          <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col">
+            <DialogHeader>
+              <DialogTitle>Import Preview</DialogTitle>
+            </DialogHeader>
+            <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+              <div className="text-sm text-slate-500 mb-2 flex justify-between shrink-0">
+                <span>
+                  Found {importData.length} records. {importData.filter(r => r.exists).length > 0 ? `${importData.filter(r => r.exists).length} existing records will be skipped.` : ""}
+                </span>
+              </div>
+              <ScrollArea className="h-[60vh] border rounded-md">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      {selectedSheet.meters.map(m => (
+                        <TableHead key={m.id}>{m.name} Final</TableHead>
+                      ))}
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {importData.map((row, idx) => (
+                      <TableRow key={idx} className={row.exists ? "bg-yellow-50 dark:bg-yellow-900/20 opacity-70" : ""}>
+                        <TableCell>{row.date}</TableCell>
+                        {selectedSheet.meters.map(m => {
+                          const r = row.readings.find(x => x.meter_id === m.id);
+                          return <TableCell key={m.id}>{r ? r.final : "-"}</TableCell>;
+                        })}
+                        <TableCell>
+                          {row.exists ? (
+                            <span className="text-yellow-600 font-medium text-xs">Existing</span>
+                          ) : (
+                            <span className="text-green-600 font-medium text-xs">New</span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {importData.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={selectedSheet.meters.length + 2} className="text-center h-24 text-slate-500">
+                          No new data found to import.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </ScrollArea>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setImportPreviewOpen(false)} disabled={loading}>Cancel</Button>
+              <Button onClick={handleImportConfirm} disabled={loading || importData.length === 0}>Confirm Import</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );

@@ -230,7 +230,7 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, year, month, 
                 </div>
 
                 <div className="space-y-4">
-                    {sheet.meters.map((meter, index) => (
+                    {(sheet.meters || []).map((meter, index) => (
                         <div key={meter.id} className="grid grid-cols-12 gap-4 items-center bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg">
                             <div className="col-span-4">
                                 <Label className="truncate block font-medium" title={meter.name}>

@@ -1,13 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import DataEntryModal from '@/components/DataEntryModal';
+import ImportPreviewModal from '@/components/ImportPreviewModal';
 import FeederTable from '@/components/FeederTable';
 import AnalyticsCharts from '@/components/AnalyticsCharts';
-import { Download, Plus, Calendar, RefreshCcw } from 'lucide-react';
+import { Download, Plus, Calendar, RefreshCcw, Upload } from 'lucide-react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -41,6 +42,9 @@ export default function LineLosses() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [initialized, setInitialized] = useState(false);
+  const [importPreviewOpen, setImportPreviewOpen] = useState(false);
+  const [importData, setImportData] = useState([]);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     initializeFeeders();
@@ -168,6 +172,55 @@ export default function LineLosses() {
     toast.success('Data refreshed');
   };
 
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelect = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    
+    // Reset input
+    event.target.value = '';
+    
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    setLoading(true);
+    try {
+      const response = await axios.post(`${API}/preview-import/${selectedFeeder.id}`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      setImportData(response.data);
+      setImportPreviewOpen(true);
+    } catch (error) {
+      console.error('Import preview failed:', error);
+      toast.error(error.response?.data?.detail || 'Failed to preview import');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleImportConfirm = async () => {
+    setLoading(true);
+    try {
+      await axios.post(`${API}/import-entries`, {
+        feeder_id: selectedFeeder.id,
+        entries: importData
+      });
+      toast.success('Data imported successfully');
+      setImportPreviewOpen(false);
+      fetchEntries(selectedFeeder.id, year, month); // Refresh
+    } catch (error) {
+      console.error('Import failed:', error);
+      toast.error('Failed to import data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  /* Removed duplicate code */
+
   const monthNames = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December'
@@ -276,6 +329,21 @@ export default function LineLosses() {
             Entry
           </Button>
           <Button 
+            onClick={handleImportClick}
+            variant="outline"
+            className="flex-1 lg:flex-none"
+          >
+            <Upload className="w-4 h-4 mr-2" />
+            Import
+          </Button>
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            onChange={handleFileSelect} 
+            className="hidden" 
+            accept=".xlsx,.xls"
+          />
+          <Button 
             variant="secondary" 
             onClick={handleExport}
             disabled={!selectedFeeder || entries.length === 0}
@@ -351,6 +419,17 @@ export default function LineLosses() {
           entries={entries}
           onPrevFeeder={goToPrevFeeder}
           onNextFeeder={goToNextFeeder}
+        />
+      )}
+      
+      {/* Import Preview Modal */}
+      {importPreviewOpen && (
+        <ImportPreviewModal
+          isOpen={importPreviewOpen}
+          onClose={() => setImportPreviewOpen(false)}
+          data={importData}
+          onConfirm={handleImportConfirm}
+          loading={loading}
         />
       )}
     </div>

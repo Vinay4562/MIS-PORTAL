@@ -5,8 +5,8 @@ import { formatDate } from '@/lib/utils';
 
 export default function EnergyAnalytics({ entries, sheet }) {
   const meterMap = {};
-  sheet.meters.forEach(m => { meterMap[m.id] = m.name; });
-  const meterNames = sheet.meters.map(m => m.name);
+  (sheet.meters || []).forEach(m => { meterMap[m.id] = m.name; });
+  const meterNames = (sheet.meters || []).map(m => m.name);
   const chartData = entries.map(e => {
     const row = { date: formatDate(e.date), total: e.total_consumption };
     meterNames.forEach(n => { row[n] = 0; });

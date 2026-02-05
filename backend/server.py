@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, status
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, UploadFile, File
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
@@ -16,6 +16,7 @@ import jwt
 import io
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl import load_workbook
 
 def format_date(date_str):
     if not date_str:
@@ -545,6 +546,309 @@ async def export_feeder_data(feeder_id: str, year: int, month: int, current_user
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
+    
+@api_router.post("/preview-import/{feeder_id}")
+async def preview_import(
+    feeder_id: str,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user)
+):
+    feeder = await db.feeders.find_one({"id": feeder_id}, {"_id": 0})
+    if not feeder:
+        raise HTTPException(status_code=404, detail="Feeder not found")
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are supported")
+    content = await file.read()
+    wb = load_workbook(io.BytesIO(content), data_only=True)
+    ws = wb.active
+    headers = [str(ws.cell(row=1, column=col).value or "").strip() for col in range(1, ws.max_column + 1)]
+    def find_col(end_name: str, kind: str):
+        target_tokens = end_name.strip().lower().replace("_", " ").replace("-", " ").replace(".", " ").split()
+        for idx, h in enumerate(headers):
+            h_low = str(h).strip().lower()
+            normalized = h_low.replace("_", " ").replace("-", " ").replace(".", " ")
+            tokens = normalized.split()
+            if all(t in tokens for t in target_tokens) and kind in tokens and "final" in tokens:
+                return idx + 1
+        return None
+    def find_generic_col(end_label: str, kind: str):
+        end_label = end_label.strip().lower()
+        for idx, h in enumerate(headers):
+            h_low = str(h).strip().lower()
+            normalized = h_low.replace("_", " ").replace("-", " ").replace(".", " ")
+            tokens = normalized.split()
+            if end_label in tokens and kind in tokens and "final" in tokens:
+                return idx + 1
+        return None
+    end1_imp_col = find_col(feeder['end1_name'], "import") or find_generic_col("end1", "import")
+    end1_exp_col = find_col(feeder['end1_name'], "export") or find_generic_col("end1", "export")
+    end2_imp_col = find_col(feeder['end2_name'], "import") or find_generic_col("end2", "import")
+    end2_exp_col = find_col(feeder['end2_name'], "export") or find_generic_col("end2", "export")
+    preview = []
+    for row in range(2, ws.max_row + 1):
+        date_cell = ws.cell(row=row, column=1).value
+        if not date_cell:
+            continue
+        if isinstance(date_cell, datetime):
+            date_str = date_cell.date().isoformat()
+        else:
+            val_str = str(date_cell).strip()
+            formats = [
+                "%Y-%m-%d",
+                "%d-%m-%Y",
+                "%d-%b-%y",
+                "%d-%b-%Y",
+                "%d/%m/%Y",
+                "%m/%d/%Y",
+                "%d.%m.%Y"
+            ]
+            parsed = False
+            for fmt in formats:
+                try:
+                    date_str = datetime.strptime(val_str, fmt).date().isoformat()
+                    parsed = True
+                    break
+                except:
+                    continue
+            if not parsed:
+                continue
+        def get_float(v):
+            try:
+                return float(v) if v is not None and str(v).strip() != "" else None
+            except:
+                return None
+        e1i = get_float(ws.cell(row=row, column=end1_imp_col).value) if end1_imp_col else None
+        e1e = get_float(ws.cell(row=row, column=end1_exp_col).value) if end1_exp_col else None
+        e2i = get_float(ws.cell(row=row, column=end2_imp_col).value) if end2_imp_col else None
+        e2e = get_float(ws.cell(row=row, column=end2_exp_col).value) if end2_exp_col else None
+        if e1i is None and e1e is None and e2i is None and e2e is None:
+            continue
+        exists = await db.entries.find_one({"feeder_id": feeder_id, "date": date_str})
+        preview.append({
+            "date": date_str,
+            "end1_import_final": e1i,
+            "end1_export_final": e1e,
+            "end2_import_final": e2i,
+            "end2_export_final": e2e,
+            "exists": bool(exists)
+        })
+    return preview
+
+class LineLossesImportPayload(BaseModel):
+    feeder_id: str
+    entries: List[dict]
+
+@api_router.post("/import-entries")
+async def import_entries(payload: LineLossesImportPayload, current_user: User = Depends(get_current_user)):
+    feeder = await db.feeders.find_one({"id": payload.feeder_id}, {"_id": 0})
+    if not feeder:
+        raise HTTPException(status_code=404, detail="Feeder not found")
+    entries_sorted = sorted(payload.entries, key=lambda x: x['date'])
+    imported = 0
+    for e in entries_sorted:
+        date_str = e['date']
+        existing = await db.entries.find_one({"feeder_id": payload.feeder_id, "date": date_str})
+        if existing:
+            continue
+        date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+        prev_date = (date_obj - timedelta(days=1)).strftime("%Y-%m-%d")
+        prev_entry = await db.entries.find_one({"feeder_id": payload.feeder_id, "date": prev_date}, {"_id": 0})
+        end1_import_initial = prev_entry['end1_import_final'] if prev_entry else 0
+        end1_export_initial = prev_entry['end1_export_final'] if prev_entry else 0
+        end2_import_initial = prev_entry['end2_import_final'] if prev_entry else 0
+        end2_export_initial = prev_entry['end2_export_final'] if prev_entry else 0
+        end1_import_final = float(e.get('end1_import_final', 0) or 0)
+        end1_export_final = float(e.get('end1_export_final', 0) or 0)
+        end2_import_final = float(e.get('end2_import_final', 0) or 0)
+        end2_export_final = float(e.get('end2_export_final', 0) or 0)
+        end1_import_consumption = (end1_import_final - end1_import_initial) * feeder['end1_import_mf']
+        end1_export_consumption = (end1_export_final - end1_export_initial) * feeder['end1_export_mf']
+        end2_import_consumption = (end2_import_final - end2_import_initial) * feeder['end2_import_mf']
+        end2_export_consumption = (end2_export_final - end2_export_initial) * feeder['end2_export_mf']
+        total_import = end1_import_consumption + end2_import_consumption
+        loss_percent = 0 if total_import == 0 else ((end1_import_consumption - end1_export_consumption + end2_import_consumption - end2_export_consumption) / total_import) * 100
+        entry_obj = DailyEntry(
+            feeder_id=payload.feeder_id,
+            date=date_str,
+            end1_import_initial=end1_import_initial,
+            end1_import_final=end1_import_final,
+            end1_export_initial=end1_export_initial,
+            end1_export_final=end1_export_final,
+            end2_import_initial=end2_import_initial,
+            end2_import_final=end2_import_final,
+            end2_export_initial=end2_export_initial,
+            end2_export_final=end2_export_final,
+            end1_import_consumption=end1_import_consumption,
+            end1_export_consumption=end1_export_consumption,
+            end2_import_consumption=end2_import_consumption,
+            end2_export_consumption=end2_export_consumption,
+            loss_percent=loss_percent
+        ).model_dump()
+        entry_obj['created_at'] = entry_obj['created_at'].isoformat() if isinstance(entry_obj['created_at'], datetime) else entry_obj['created_at']
+        entry_obj['updated_at'] = entry_obj['updated_at'].isoformat() if isinstance(entry_obj['updated_at'], datetime) else entry_obj['updated_at']
+        await db.entries.insert_one(entry_obj)
+        imported += 1
+    return {"imported": imported}
+
+@api_router.post("/energy/preview-import/{sheet_id}")
+async def preview_energy_import(
+    sheet_id: str,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user)
+):
+    sheet = await db.energy_sheets.find_one({"id": sheet_id}, {"_id": 0})
+    if not sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+    meters = await db.energy_meters.find({"sheet_id": sheet_id}, {"_id": 0}).to_list(100)
+    if not meters:
+        raise HTTPException(status_code=400, detail="No meters configured for this sheet")
+    
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are supported")
+    
+    content = await file.read()
+    wb = load_workbook(io.BytesIO(content), data_only=True)
+    ws = wb.active
+    
+    headers = [str(ws.cell(row=1, column=col).value or "").strip() for col in range(1, ws.max_column + 1)]
+    
+    def find_final_col(meter_name: str):
+        target = meter_name.strip().lower()
+        for idx, h in enumerate(headers):
+            h_low = h.strip().lower()
+            
+            # 1. Exact phrase match
+            if h_low == f"{target} final":
+                return idx + 1
+                
+            # 2. Token-based match (safer for short names like "IV")
+            # Normalize separators to spaces
+            normalized = h_low.replace("_", " ").replace("-", " ").replace(".", " ")
+            tokens = normalized.split()
+            
+            if target in tokens and "final" in tokens:
+                return idx + 1
+                
+        return None
+    
+    meter_final_cols = {}
+    for m in meters:
+        col = find_final_col(m['name'])
+        if col:
+            meter_final_cols[m['id']] = col
+    
+    preview = []
+    for row in range(2, ws.max_row + 1):
+        date_cell = ws.cell(row=row, column=1).value
+        if not date_cell:
+            continue
+        if isinstance(date_cell, datetime):
+            date_str = date_cell.date().isoformat()
+        else:
+            val_str = str(date_cell).strip()
+            # Try multiple common date formats
+            formats = [
+                "%Y-%m-%d",      # 2026-01-01
+                "%d-%m-%Y",      # 01-01-2026
+                "%d-%b-%y",      # 01-Jan-26
+                "%d-%b-%Y",      # 01-Jan-2026
+                "%d/%m/%Y",      # 01/01/2026
+                "%m/%d/%Y",      # 01/01/2026 (US)
+                "%d.%m.%Y"       # 01.01.2026
+            ]
+            parsed = False
+            for fmt in formats:
+                try:
+                    date_str = datetime.strptime(val_str, fmt).date().isoformat()
+                    parsed = True
+                    break
+                except:
+                    continue
+            
+            if not parsed:
+                continue
+        
+        readings = []
+        for meter_id, col in meter_final_cols.items():
+            val = ws.cell(row=row, column=col).value
+            try:
+                final = float(val) if val is not None else None
+            except:
+                final = None
+            if final is not None:
+                readings.append({"meter_id": meter_id, "final": final})
+        
+        if not readings:
+            continue
+        
+        exists = await db.energy_entries.find_one({"sheet_id": sheet_id, "date": date_str})
+        preview.append({
+            "date": date_str,
+            "readings": readings,
+            "exists": bool(exists)
+        })
+    
+    return preview
+
+class EnergyImportPayload(BaseModel):
+    sheet_id: str
+    entries: List[dict]
+
+@api_router.post("/energy/import-entries")
+async def import_energy_entries(payload: EnergyImportPayload, current_user: User = Depends(get_current_user)):
+    sheet_id = payload.sheet_id
+    meters = await db.energy_meters.find({"sheet_id": sheet_id}, {"_id": 0}).to_list(100)
+    meter_map = {m['id']: m for m in meters}
+    
+    entries_sorted = sorted(payload.entries, key=lambda x: x['date'])
+    imported = 0
+    for e in entries_sorted:
+        date_str = e['date']
+        existing = await db.energy_entries.find_one({"sheet_id": sheet_id, "date": date_str})
+        if existing:
+            continue
+        
+        date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+        prev_date = (date_obj - timedelta(days=1)).strftime("%Y-%m-%d")
+        prev_entry = await db.energy_entries.find_one({"sheet_id": sheet_id, "date": prev_date}, {"_id": 0})
+        prev_finals = {}
+        if prev_entry:
+            for r in prev_entry.get('readings', []):
+                prev_finals[r['meter_id']] = r['final']
+        
+        readings = []
+        total_consumption = 0.0
+        for r in e.get('readings', []):
+            meter = meter_map.get(r['meter_id'])
+            if not meter:
+                continue
+            initial = prev_finals.get(r['meter_id'], 0.0)
+            final = float(r['final'])
+            consumption = (final - initial) * meter['mf']
+            readings.append({
+                "meter_id": r['meter_id'],
+                "initial": initial,
+                "final": final,
+                "consumption": consumption
+            })
+            total_consumption += consumption
+        
+        entry_doc = EnergyEntry(
+            sheet_id=sheet_id,
+            date=date_str,
+            readings=[EnergyReading(**rr) for rr in readings],
+            total_consumption=total_consumption
+        ).model_dump()
+        
+        if isinstance(entry_doc.get('created_at'), datetime):
+            entry_doc['created_at'] = entry_doc['created_at'].isoformat()
+        if isinstance(entry_doc.get('updated_at'), datetime):
+            entry_doc['updated_at'] = entry_doc['updated_at'].isoformat()
+        
+        await db.energy_entries.insert_one(entry_doc)
+        imported += 1
+    
+    return {"imported": imported}
 
 # Max-Min Data Module Endpoints
 
