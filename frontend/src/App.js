@@ -8,6 +8,7 @@ import DashboardHome from '@/pages/DashboardHome';
 import LineLosses from '@/pages/LineLosses';
 import EnergyConsumption from '@/pages/EnergyConsumption';
 import MaxMinData from '@/pages/MaxMinData';
+import Reports from '@/pages/Reports';
 import DashboardLayout from '@/components/DashboardLayout';
 import '@/App.css';
 
@@ -58,6 +59,13 @@ function App() {
               <ProtectedRoute>
                 <DashboardLayout>
                   <MaxMinData />
+                </DashboardLayout>
+              </ProtectedRoute>
+            } />
+            <Route path="/reports" element={
+              <ProtectedRoute>
+                <DashboardLayout>
+                  <Reports />
                 </DashboardLayout>
               </ProtectedRoute>
             } />

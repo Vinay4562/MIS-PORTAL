@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "D:\Projects\MIS-PORTAL\backend\server.py", line 5035, in export_tl_max_loading_report
+    c = ws.cell(row=2, column=6, value="MAXIMUM")
+  File "C:\Users\ADMIN\AppData\Local\Programs\Python\Python313\Lib\site-packages\openpyxl\worksheet\worksheet.py", line 246, in cell
+    cell.value = value
+    ^^^^^^^^^^
+AttributeError: 'MergedCell' object attribute 'value' is read-only

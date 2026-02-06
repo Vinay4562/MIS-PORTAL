@@ -11,7 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Menu, Zap, LogOut, Sun, Moon, TrendingDown, Activity, Maximize2, BarChart2, CircleUser, User } from 'lucide-react';
+import { Menu, Zap, LogOut, Sun, Moon, TrendingDown, Activity, Maximize2, BarChart2, CircleUser, User, FileText } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 export default function DashboardLayout({ children }) {
@@ -93,6 +93,22 @@ export default function DashboardLayout({ children }) {
         >
           <BarChart2 className="w-5 h-5" />
           <span className="font-medium">MAX-MIN DATA</span>
+        </button>
+
+        <button
+          onClick={() => {
+            navigate('/reports');
+            setOpen(false);
+          }}
+          className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-left ${
+            location.pathname === '/reports'
+              ? 'bg-blue-600 text-white'
+              : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+          }`}
+          data-testid="reports-menu"
+        >
+          <FileText className="w-5 h-5" />
+          <span className="font-medium">REPORTS</span>
         </button>
       </nav>
 

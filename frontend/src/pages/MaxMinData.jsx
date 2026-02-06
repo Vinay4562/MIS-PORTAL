@@ -618,7 +618,7 @@ export default function MaxMinData() {
                                 <>
                                     <TableHead className="border-l border-slate-200 text-rose-600 text-center">400KV</TableHead><TableHead className="text-rose-600 text-center">220KV</TableHead><TableHead className="text-rose-600 text-center">Time</TableHead>{/*
                                     */}<TableHead className="border-l border-slate-200 text-blue-600 text-center">400KV</TableHead><TableHead className="text-blue-600 text-center">220KV</TableHead><TableHead className="text-blue-600 text-center">Time</TableHead>{/*
-                                    */}<TableHead className="border-l border-slate-200 text-purple-600 text-center">Max MW</TableHead><TableHead className="text-purple-600 text-center">Time</TableHead><TableHead className="text-purple-600 text-center">MVAR</TableHead>
+                                    */}<TableHead className="border-l border-slate-200 text-purple-600 text-center">Max MW</TableHead><TableHead className="text-purple-600 text-center">MVAR</TableHead><TableHead className="text-purple-600 text-center">Time</TableHead>
                                 </>
                             ) : (
                                 <>
@@ -658,8 +658,8 @@ export default function MaxMinData() {
                                             */}<TableCell className="text-center">{formatTime(getVal(entry.data, 'min_bus_voltage.time') || getVal(entry.data, 'min_bus_voltage_400kv.time') || getVal(entry.data, 'min_bus_voltage_220kv.time'))}</TableCell>{/*
                                             
                                             */}<TableCell className="border-l text-center">{getStationLoad(entry.date)?.max_mw || getVal(entry.data, 'station_load.max_mw')}</TableCell>{/*
-                                            */}<TableCell className="text-center">{formatTime(getStationLoad(entry.date)?.time || getVal(entry.data, 'station_load.time'))}</TableCell>{/*
-                                            */}<TableCell className="text-center">{getStationLoad(entry.date)?.mvar || getVal(entry.data, 'station_load.mvar')}</TableCell>
+                                            */}<TableCell className="text-center">{getStationLoad(entry.date)?.mvar || getVal(entry.data, 'station_load.mvar')}</TableCell>{/*
+                                            */}<TableCell className="text-center">{formatTime(getStationLoad(entry.date)?.time || getVal(entry.data, 'station_load.time'))}</TableCell>
                                         </>
                                     ) : (
                                         <>
