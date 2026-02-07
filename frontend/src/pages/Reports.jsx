@@ -3,7 +3,11 @@ import axios from 'axios';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { FileText, Eye, Download, Calendar } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import { FileText, Eye, Download, Calendar, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 import { ReportPreviewModal } from '@/components/ReportPreviewModal';
 import { Loader } from '@/components/ui/loader';
@@ -36,6 +40,55 @@ export default function Reports() {
   const [previewData, setPreviewData] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewReport, setPreviewReport] = useState(null);
+
+  // Email State
+  const [emailDialogOpen, setEmailDialogOpen] = useState(false);
+  const [recipientEmail, setRecipientEmail] = useState('');
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [selectedReportIds, setSelectedReportIds] = useState(REPORTS.map(r => r.id));
+
+  const handleSendEmail = async () => {
+    if (!recipientEmail) {
+        toast.error("Please enter an email address");
+        return;
+    }
+    
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(recipientEmail)) {
+        toast.error("Please enter a valid email address");
+        return;
+    }
+
+    if (selectedReportIds.length === 0) {
+        toast.error("Please select at least one report to send");
+        return;
+    }
+
+    setSendingEmail(true);
+    try {
+        const token = localStorage.getItem('token');
+        await axios.post(`${API}/reports/send-mail`, {
+            email: recipientEmail,
+            year,
+            month,
+            report_ids: selectedReportIds
+        }, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        toast.success(`Reports sent successfully to ${recipientEmail}`);
+        setEmailDialogOpen(false);
+        setRecipientEmail('');
+        // Reset selection to all for next time, or keep it? 
+        // Let's reset to all as it's the default behavior
+        setSelectedReportIds(REPORTS.map(r => r.id));
+    } catch (error) {
+        console.error("Failed to send email:", error);
+        toast.error(error.response?.data?.detail || "Failed to send email");
+    } finally {
+        setSendingEmail(false);
+    }
+  };
 
   const handleSubmitDateSelection = () => {
     setShowDateSelector(false);
@@ -243,10 +296,18 @@ export default function Reports() {
                 className="gap-2"
             >
                 <Calendar className="w-4 h-4" />
-                Period
-            </Button>
-        </div>
-      </div>
+            Period
+        </Button>
+        <Button 
+            variant="outline" 
+            onClick={() => setEmailDialogOpen(true)}
+            className="gap-2"
+        >
+            <Mail className="w-4 h-4" />
+            Send Mail
+        </Button>
+    </div>
+  </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
         {REPORTS.map((report) => (
@@ -296,6 +357,94 @@ export default function Reports() {
             month={month}
         />
       )}
+
+      <Dialog open={emailDialogOpen} onOpenChange={setEmailDialogOpen}>
+        <DialogContent className="max-w-md">
+            <DialogHeader>
+                <DialogTitle>Send Reports via Email</DialogTitle>
+                <DialogDescription>
+                    Select reports and enter the recipient's email address. All reports for {monthNames[month-1]} {year} are available.
+                </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+                <div className="grid gap-2">
+                    <Label htmlFor="email">
+                        Email Address
+                    </Label>
+                    <Input
+                        id="email"
+                        type="email"
+                        value={recipientEmail}
+                        onChange={(e) => setRecipientEmail(e.target.value)}
+                        placeholder="recipient@example.com"
+                    />
+                </div>
+                
+                <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                        <Label>Select Reports</Label>
+                        <div className="flex gap-2">
+                             <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                className="h-auto p-0 text-xs text-blue-600 hover:text-blue-800 hover:bg-transparent"
+                                onClick={() => setSelectedReportIds(REPORTS.map(r => r.id))}
+                             >
+                                Select All
+                             </Button>
+                             <span className="text-xs text-slate-300">|</span>
+                             <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                className="h-auto p-0 text-xs text-blue-600 hover:text-blue-800 hover:bg-transparent"
+                                onClick={() => setSelectedReportIds([])}
+                             >
+                                None
+                             </Button>
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 max-h-[250px] overflow-y-auto border p-3 rounded-md bg-slate-50 dark:bg-slate-900/50">
+                        {REPORTS.map((report) => (
+                            <div key={report.id} className="flex items-center space-x-2 hover:bg-slate-100 dark:hover:bg-slate-800 p-1 rounded transition-colors">
+                                <Checkbox 
+                                    id={`report-${report.id}`} 
+                                    checked={selectedReportIds.includes(report.id)}
+                                    onCheckedChange={(checked) => {
+                                        if (checked) {
+                                            setSelectedReportIds(prev => [...prev, report.id]);
+                                        } else {
+                                            setSelectedReportIds(prev => prev.filter(id => id !== report.id));
+                                        }
+                                    }}
+                                />
+                                <label 
+                                    htmlFor={`report-${report.id}`}
+                                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer flex-1 py-1"
+                                >
+                                    {report.title}
+                                </label>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </div>
+            <DialogFooter>
+                <Button variant="outline" onClick={() => setEmailDialogOpen(false)} disabled={sendingEmail}>
+                    Cancel
+                </Button>
+                <Button onClick={handleSendEmail} disabled={sendingEmail || selectedReportIds.length === 0}>
+                    {sendingEmail ? (
+                        <>
+                            <Loader className="mr-2 h-4 w-4 animate-spin" />
+                            Sending...
+                        </>
+                    ) : (
+                        'Send'
+                    )}
+                </Button>
+            </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

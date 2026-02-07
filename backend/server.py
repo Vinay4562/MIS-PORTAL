@@ -18,6 +18,8 @@ import smtplib
 import calendar
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 import random
 import string
 from openpyxl import Workbook
@@ -96,6 +98,36 @@ def send_otp_email(user_email: str, otp: str, reason: str = "reset"):
     except Exception as e:
         print(f"Error sending email: {e}")
         raise HTTPException(status_code=500, detail="Failed to send OTP email")
+
+def send_reports_email(recipient_email: str, attachments: list):
+    try:
+        sender_email = os.environ.get("SMTP_EMAIL")
+        sender_password = os.environ.get("SMTP_PASSWORD")
+
+        message = MIMEMultipart()
+        message["From"] = sender_email
+        message["To"] = recipient_email
+        message["Subject"] = "MIS Portal Reports"
+
+        body = "Please find the attached reports for the selected period."
+        message.attach(MIMEText(body, "plain"))
+
+        for filename, content in attachments:
+            part = MIMEBase("application", "octet-stream")
+            part.set_payload(content)
+            encoders.encode_base64(part)
+            part.add_header(
+                "Content-Disposition",
+                f"attachment; filename= {filename}",
+            )
+            message.attach(part)
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, recipient_email, message.as_string())
+    except Exception as e:
+        print(f"Error sending reports email: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to send email: {str(e)}")
 
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
@@ -177,6 +209,12 @@ class ResetPasswordRequest(BaseModel):
 class SignupVerifyRequest(BaseModel):
     email: str
     otp: str
+
+class EmailReportRequest(BaseModel):
+    email: str
+    year: int
+    month: int
+    report_ids: Optional[List[str]] = None
 
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -3207,12 +3245,7 @@ async def export_all_max_min_data(
         headers={"Content-Disposition": f"attachment; filename=MaxMin_All_{year}_{month:02d}.xlsx"}
     )
 
-@api_router.get("/reports/fortnight/{year}/{month}")
-async def generate_fortnight_report(
-    year: int,
-    month: int,
-    current_user: User = Depends(get_current_user)
-):
+async def _generate_fortnight_report_wb(year: int, month: int):
     try:
         import io
         import calendar
@@ -3529,10 +3562,29 @@ async def generate_fortnight_report(
                     except: pass
                 ws.column_dimensions[col_letter].width = max_len + 2
                 
+        return wb
+    except Exception as e:
+        import traceback
+        import os
+        error_msg = traceback.format_exc()
+        print(error_msg)
+        raise e
+
+@api_router.get("/reports/fortnight/{year}/{month}")
+async def generate_fortnight_report(
+    year: int,
+    month: int,
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        import calendar
+        wb = await _generate_fortnight_report_wb(year, month)
+        
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
         
+        month_name = calendar.month_name[month]
         filename = f"Fortnight_Report_{month_name}_{year}.xlsx"
         
         return StreamingResponse(
@@ -3541,19 +3593,6 @@ async def generate_fortnight_report(
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
     except Exception as e:
-        import traceback
-        import os
-        error_msg = traceback.format_exc()
-        print(error_msg)
-        # Log to file for debugging
-        try:
-            with open(os.path.join(os.getcwd(), "error_log.txt"), "a") as f:
-                f.write(f"\n--- Error at {datetime.now()} ---\n")
-                f.write(error_msg)
-        except:
-            pass
-        
-        # Return error with CORS headers just in case
         return JSONResponse(
             status_code=500,
             content={"detail": str(e)},
@@ -3848,12 +3887,7 @@ async def get_daily_max_mva_preview(
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
 
-@api_router.get("/reports/daily-max-mva/export/{year}/{month}")
-async def export_daily_max_mva_report(
-    year: int,
-    month: int,
-    current_user: User = Depends(get_current_user)
-):
+async def _generate_daily_max_mva_wb(year: int, month: int):
     try:
         import math
         import calendar
@@ -3951,6 +3985,22 @@ async def export_daily_max_mva_report(
                 except: pass
             ws.column_dimensions[col_letter].width = max(max_len + 2, 12)
 
+        return wb
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise e
+
+@api_router.get("/reports/daily-max-mva/export/{year}/{month}")
+async def export_daily_max_mva_report(
+    year: int,
+    month: int,
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        import io
+        wb = await _generate_daily_max_mva_wb(year, month)
+        
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
@@ -3963,19 +4013,12 @@ async def export_daily_max_mva_report(
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
     except Exception as e:
-        import traceback
-        traceback.print_exc()
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
 
 
 
-@api_router.get("/energy/export-all/{year}/{month}")
-async def export_all_energy_sheets(
-    year: int,
-    month: int,
-    current_user: User = Depends(get_current_user)
-):
+async def _generate_energy_export_wb(year: int, month: int):
     sheets = await db.energy_sheets.find({}, {"_id": 0}).to_list(100)
     sheets.sort(key=lambda x: x['name'])
     
@@ -4044,6 +4087,16 @@ async def export_all_energy_sheets(
             adjusted_width = (max_length + 2)
             ws.column_dimensions[column].width = adjusted_width
             
+    return wb
+
+@api_router.get("/energy/export-all/{year}/{month}")
+async def export_all_energy_sheets(
+    year: int,
+    month: int,
+    current_user: User = Depends(get_current_user)
+):
+    wb = await _generate_energy_export_wb(year, month)
+    
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)
@@ -4355,12 +4408,7 @@ async def get_boundary_meter_report_json(
 ):
     return await get_boundary_meter_data(year, month)
 
-@api_router.get("/reports/boundary-meter-33kv/{year}/{month}")
-async def generate_boundary_meter_report(
-    year: int,
-    month: int,
-    current_user: User = Depends(get_current_user)
-):
+async def _generate_boundary_meter_wb(year: int, month: int):
     data = await get_boundary_meter_data(year, month)
     report_data = data['report_data']
     prev_month_str = data['prev_month_str']
@@ -4496,22 +4544,45 @@ async def generate_boundary_meter_report(
     ws.column_dimensions['I'].width = 15
     ws.column_dimensions['J'].width = 10
 
-    # Save to buffer
-    from io import BytesIO
-    output = BytesIO()
-    wb.save(output)
-    output.seek(0)
-    
-    filename = f"Boundary_Meter_Report_{month_name}_{year}.xlsx"
-    headers = {
-        'Content-Disposition': f'attachment; filename="{filename}"'
-    }
-    
-    return StreamingResponse(
-        output,
-        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        headers=headers
-    )
+    return wb
+
+@api_router.get("/reports/boundary-meter-33kv/{year}/{month}")
+async def generate_boundary_meter_report(
+    year: int,
+    month: int,
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        import calendar
+        from io import BytesIO
+        
+        # We need month_name for the filename, but it's not directly returned by the wb function.
+        # However, we can re-calculate it or fetch it.
+        # But _generate_boundary_meter_wb calculates it internally.
+        # Maybe we should return (wb, filename) from the internal function?
+        # Or just recalculate it here.
+        
+        wb = await _generate_boundary_meter_wb(year, month)
+        month_name = calendar.month_name[month]
+        
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        
+        filename = f"Boundary_Meter_Report_{month_name}_{year}.xlsx"
+        headers = {
+            'Content-Disposition': f'attachment; filename="{filename}"'
+        }
+        
+        return StreamingResponse(
+            output,
+            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            headers=headers
+        )
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
 
 # --- KPI Report Logic ---
 
@@ -4703,6 +4774,208 @@ async def get_kpi_preview(
         traceback.print_exc()
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
+async def _generate_kpi_report_wb(year: int, month: int):
+    import calendar
+    from openpyxl.styles import PatternFill, Border, Side, Alignment, Font
+    from openpyxl.utils import get_column_letter
+    
+    # --- Common Styles ---
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    bold_font = Font(bold=True)
+    
+    wb = Workbook()
+    
+    # --- Data Prep ---
+    start_date = f"{year}-{month:02d}-01"
+    if month == 12:
+        end_date = f"{year + 1}-01-01"
+    else:
+        end_date = f"{year}-{month + 1:02d}-01"
+    
+    month_name = calendar.month_name[month]
+    
+    all_entries = await db.max_min_entries.find(
+        {"date": {"$gte": start_date, "$lt": end_date}},
+        {"_id": 0}
+    ).to_list(5000)
+    
+    entries_by_feeder = {}
+    for e in all_entries:
+        if e['feeder_id'] not in entries_by_feeder:
+            entries_by_feeder[e['feeder_id']] = []
+        entries_by_feeder[e['feeder_id']].append(e)
+
+    # ================= SHEET 1: Over Loading of Lines =================
+    ws1 = wb.active
+    ws1.title = "Over Loading of Lines"
+    
+    # Header Rows
+    ws1.merge_cells('A1:L1')
+    c = ws1.cell(row=1, column=1, value="400/220KV SHANKARPALLY SUBSTATION")
+    c.font = bold_font; c.alignment = center_align; c.border = thin_border
+    
+    ws1.merge_cells('A2:L2')
+    c = ws1.cell(row=2, column=1, value=f"STATEMENT 20: FOR THE MONTH OF {month_name}-{year}")
+    c.font = bold_font; c.alignment = center_align; c.border = thin_border
+    
+    ws1.merge_cells('A3:L3')
+    c = ws1.cell(row=3, column=1, value="Overloading of Lines")
+    c.font = bold_font; c.alignment = center_align; c.border = thin_border
+    
+    headers = [
+        "Sl. No.", "Name of Zone", "Circle", "Name of feeder", 
+        "Length in KM (Total Length)", "Length in CKM", "Type of Conductor",
+        "Current Carrying Capacity", "Avg.Loading (Amps)", "Max.Line loading (Amps)",
+        "% line loading", "Remarks"
+    ]
+    
+    for i, h in enumerate(headers):
+        cell = ws1.cell(row=4, column=i+1, value=h)
+        cell.font = bold_font
+        cell.alignment = center_align
+        cell.border = thin_border
+        
+    feeders = await db.max_min_feeders.find({"type": {"$in": ["feeder_400kv", "feeder_220kv"]}}, {"_id": 0}).to_list(100)
+    feeders.sort(key=lambda x: FEEDER_ORDER_KPI.index(x['name']) if x['name'] in FEEDER_ORDER_KPI else 999)
+    
+    row_idx = 5
+    sl_no = 1
+    for f in feeders:
+        if f['name'] not in FEEDER_ORDER_KPI: continue
+        
+        details = KPI_FEEDER_DETAILS.get(f['name'], {})
+        entries = entries_by_feeder.get(f['id'], [])
+        stats = calculate_kpi_stats(entries, f['type'])
+        
+        avg_load = stats['avg_val']
+        max_load = stats['max_val']
+        pct_load = (avg_load / max_load * 100) if max_load > 0 else 0
+        
+        row_data = [
+            sl_no,
+            "Metro Zone",
+            "Metro- West",
+            f['name'],
+            details.get('length_km', '-'),
+            details.get('length_ckm', '-'),
+            details.get('conductor', '-'),
+            details.get('capacity', '-'),
+            f"{avg_load:.2f}" if avg_load else "-",
+            f"{max_load:.2f}" if max_load else "-",
+            f"{pct_load:.2f}" if pct_load else "-",
+            "-"
+        ]
+        
+        for i, val in enumerate(row_data):
+            cell = ws1.cell(row=row_idx, column=i+1, value=val)
+            cell.alignment = center_align
+            cell.border = thin_border
+            
+        row_idx += 1
+        sl_no += 1
+        
+    for i in range(1, ws1.max_column + 1):
+        col_letter = get_column_letter(i)
+        max_len = 0
+        for cell in ws1[col_letter]:
+            if cell.row <= 3: continue
+            try:
+                if cell.value and len(str(cell.value)) > max_len:
+                    max_len = len(str(cell.value))
+            except: pass
+        ws1.column_dimensions[col_letter].width = max(max_len + 2, 10)
+
+
+    # ================= SHEET 2: ICT'S =================
+    ws2 = wb.create_sheet(title="ICT'S")
+    
+    ws2.merge_cells('A1:J1')
+    c = ws2.cell(row=1, column=1, value="400/220KV SHANKARAPALLY")
+    c.font = bold_font; c.alignment = center_align; c.border = thin_border
+    
+    ws2.merge_cells('A2:J2')
+    c = ws2.cell(row=2, column=1, value="ANNEXURE XVIII")
+    c.font = bold_font; c.alignment = center_align; c.border = thin_border
+    
+    ws2.merge_cells('A3:J3')
+    c = ws2.cell(row=3, column=1, value="REDUCTION OF TRANSMISSION LINE FORMATS")
+    c.font = bold_font; c.alignment = center_align; c.border = thin_border
+    
+    ws2.merge_cells('A4:J4')
+    c = ws2.cell(row=4, column=1, value=f"(A) Details of overloading of PTRs (70% and above) For {month_name}-{year}")
+    c.font = bold_font; c.alignment = center_align; c.border = thin_border
+    
+    headers = [
+        "Sl.No", "Name of Zone", "TL&ss Circle", "Name of Substation", 
+        "Existing ICT capacity (MVA)", "Proposed augmentation of ICT capacity",
+        "Max. Demand reached during the month (MW)", "Average load in MW",
+        "Average Percentage of ICT loading", "Remarks"
+    ]
+    
+    for i, h in enumerate(headers):
+        cell = ws2.cell(row=5, column=i+1, value=h)
+        cell.font = bold_font
+        cell.alignment = center_align
+        cell.border = thin_border
+        
+    ict_feeders = await db.max_min_feeders.find({"type": "ict_feeder"}, {"_id": 0}).to_list(100)
+    ict_feeders.sort(key=lambda x: ICT_ORDER_KPI.index(x['name']) if x['name'] in ICT_ORDER_KPI else 999)
+    
+    row_idx = 6
+    sl_no = 1
+    for f in ict_feeders:
+        entries = entries_by_feeder.get(f['id'], [])
+        stats = calculate_kpi_stats(entries, f['type'])
+        
+        avg_load = stats['avg_val']
+        max_demand = stats['max_val']
+        pct_load = (avg_load / max_demand * 100) if max_demand > 0 else 0
+        
+        name_parts = f['name'].split(' ')
+        formatted_name = f['name']
+        if len(name_parts) >= 2:
+                try:
+                    ict_part = name_parts[0] 
+                    mva_part = name_parts[1].replace('(', '').replace(')', '')
+                    formatted_name = f"{mva_part[:3]} MVA {ict_part}"
+                    if "500" in mva_part: formatted_name = "500MVA ICT-4"
+                except: pass
+        
+        row_data = [
+            sl_no,
+            "Merto Zone", 
+            "OMC- Metro- West Circle",
+            "400KV Shankarpally",
+            formatted_name,
+            "-",
+            f"{max_demand:.2f}" if max_demand else "-",
+            f"{avg_load:.2f}" if avg_load else "-",
+            f"{pct_load:.2f}" if pct_load else "-",
+            "-"
+        ]
+        
+        for i, val in enumerate(row_data):
+            cell = ws2.cell(row=row_idx, column=i+1, value=val)
+            cell.alignment = center_align
+            cell.border = thin_border
+            
+        row_idx += 1
+        sl_no += 1
+
+    for i in range(1, ws2.max_column + 1):
+        col_letter = get_column_letter(i)
+        max_len = 0
+        for cell in ws2[col_letter]:
+            if cell.row <= 4: continue
+            try:
+                if cell.value and len(str(cell.value)) > max_len:
+                    max_len = len(str(cell.value))
+            except: pass
+        ws2.column_dimensions[col_letter].width = max(max_len + 2, 12)
+        
+    return wb
+
 @api_router.get("/reports/kpi/export/{year}/{month}")
 async def export_kpi_report(
     year: int,
@@ -4711,204 +4984,9 @@ async def export_kpi_report(
 ):
     try:
         import calendar
-        from openpyxl.styles import PatternFill, Border, Side, Alignment, Font
-        from openpyxl.utils import get_column_letter
-        
-        # --- Common Styles ---
-        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-        center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
-        bold_font = Font(bold=True)
-        
-        wb = Workbook()
-        
-        # --- Data Prep ---
-        start_date = f"{year}-{month:02d}-01"
-        if month == 12:
-            end_date = f"{year + 1}-01-01"
-        else:
-            end_date = f"{year}-{month + 1:02d}-01"
-        
+        wb = await _generate_kpi_report_wb(year, month)
         month_name = calendar.month_name[month]
         
-        all_entries = await db.max_min_entries.find(
-            {"date": {"$gte": start_date, "$lt": end_date}},
-            {"_id": 0}
-        ).to_list(5000)
-        
-        entries_by_feeder = {}
-        for e in all_entries:
-            if e['feeder_id'] not in entries_by_feeder:
-                entries_by_feeder[e['feeder_id']] = []
-            entries_by_feeder[e['feeder_id']].append(e)
-
-        # ================= SHEET 1: Over Loading of Lines =================
-        ws1 = wb.active
-        ws1.title = "Over Loading of Lines"
-        
-        # Header Rows
-        ws1.merge_cells('A1:L1')
-        c = ws1.cell(row=1, column=1, value="400/220KV SHANKARPALLY SUBSTATION")
-        c.font = bold_font; c.alignment = center_align; c.border = thin_border
-        
-        ws1.merge_cells('A2:L2')
-        c = ws1.cell(row=2, column=1, value=f"STATEMENT 20: FOR THE MONTH OF {month_name}-{year}")
-        c.font = bold_font; c.alignment = center_align; c.border = thin_border
-        
-        ws1.merge_cells('A3:L3')
-        c = ws1.cell(row=3, column=1, value="Overloading of Lines")
-        c.font = bold_font; c.alignment = center_align; c.border = thin_border
-        
-        headers = [
-            "Sl. No.", "Name of Zone", "Circle", "Name of feeder", 
-            "Length in KM (Total Length)", "Length in CKM", "Type of Conductor",
-            "Current Carrying Capacity", "Avg.Loading (Amps)", "Max.Line loading (Amps)",
-            "% line loading", "Remarks"
-        ]
-        
-        for i, h in enumerate(headers):
-            cell = ws1.cell(row=4, column=i+1, value=h)
-            cell.font = bold_font
-            cell.alignment = center_align
-            cell.border = thin_border
-            
-        feeders = await db.max_min_feeders.find({"type": {"$in": ["feeder_400kv", "feeder_220kv"]}}, {"_id": 0}).to_list(100)
-        feeders.sort(key=lambda x: FEEDER_ORDER_KPI.index(x['name']) if x['name'] in FEEDER_ORDER_KPI else 999)
-        
-        row_idx = 5
-        sl_no = 1
-        for f in feeders:
-            if f['name'] not in FEEDER_ORDER_KPI: continue
-            
-            details = KPI_FEEDER_DETAILS.get(f['name'], {})
-            entries = entries_by_feeder.get(f['id'], [])
-            stats = calculate_kpi_stats(entries, f['type'])
-            
-            avg_load = stats['avg_val']
-            max_load = stats['max_val']
-            pct_load = (avg_load / max_load * 100) if max_load > 0 else 0
-            
-            row_data = [
-                sl_no,
-                "Metro Zone",
-                "Metro- West",
-                f['name'],
-                details.get('length_km', '-'),
-                details.get('length_ckm', '-'),
-                details.get('conductor', '-'),
-                details.get('capacity', '-'),
-                f"{avg_load:.2f}" if avg_load else "-",
-                f"{max_load:.2f}" if max_load else "-",
-                f"{pct_load:.2f}" if pct_load else "-",
-                "-"
-            ]
-            
-            for i, val in enumerate(row_data):
-                cell = ws1.cell(row=row_idx, column=i+1, value=val)
-                cell.alignment = center_align
-                cell.border = thin_border
-                
-            row_idx += 1
-            sl_no += 1
-            
-        for i in range(1, ws1.max_column + 1):
-            col_letter = get_column_letter(i)
-            max_len = 0
-            for cell in ws1[col_letter]:
-                if cell.row <= 3: continue
-                try:
-                    if cell.value and len(str(cell.value)) > max_len:
-                        max_len = len(str(cell.value))
-                except: pass
-            ws1.column_dimensions[col_letter].width = max(max_len + 2, 10)
-
-
-        # ================= SHEET 2: ICT'S =================
-        ws2 = wb.create_sheet(title="ICT'S")
-        
-        ws2.merge_cells('A1:J1')
-        c = ws2.cell(row=1, column=1, value="400/220KV SHANKARAPALLY")
-        c.font = bold_font; c.alignment = center_align; c.border = thin_border
-        
-        ws2.merge_cells('A2:J2')
-        c = ws2.cell(row=2, column=1, value="ANNEXURE XVIII")
-        c.font = bold_font; c.alignment = center_align; c.border = thin_border
-        
-        ws2.merge_cells('A3:J3')
-        c = ws2.cell(row=3, column=1, value="REDUCTION OF TRANSMISSION LINE FORMATS")
-        c.font = bold_font; c.alignment = center_align; c.border = thin_border
-        
-        ws2.merge_cells('A4:J4')
-        c = ws2.cell(row=4, column=1, value=f"(A) Details of overloading of PTRs (70% and above) For {month_name}-{year}")
-        c.font = bold_font; c.alignment = center_align; c.border = thin_border
-        
-        headers = [
-            "Sl.No", "Name of Zone", "TL&ss Circle", "Name of Substation", 
-            "Existing ICT capacity (MVA)", "Proposed augmentation of ICT capacity",
-            "Max. Demand reached during the month (MW)", "Average load in MW",
-            "Average Percentage of ICT loading", "Remarks"
-        ]
-        
-        for i, h in enumerate(headers):
-            cell = ws2.cell(row=5, column=i+1, value=h)
-            cell.font = bold_font
-            cell.alignment = center_align
-            cell.border = thin_border
-            
-        ict_feeders = await db.max_min_feeders.find({"type": "ict_feeder"}, {"_id": 0}).to_list(100)
-        ict_feeders.sort(key=lambda x: ICT_ORDER_KPI.index(x['name']) if x['name'] in ICT_ORDER_KPI else 999)
-        
-        row_idx = 6
-        sl_no = 1
-        for f in ict_feeders:
-            entries = entries_by_feeder.get(f['id'], [])
-            stats = calculate_kpi_stats(entries, f['type'])
-            
-            avg_load = stats['avg_val']
-            max_demand = stats['max_val']
-            pct_load = (avg_load / max_demand * 100) if max_demand > 0 else 0
-            
-            name_parts = f['name'].split(' ')
-            formatted_name = f['name']
-            if len(name_parts) >= 2:
-                 try:
-                     ict_part = name_parts[0] 
-                     mva_part = name_parts[1].replace('(', '').replace(')', '')
-                     formatted_name = f"{mva_part[:3]} MVA {ict_part}"
-                     if "500" in mva_part: formatted_name = "500MVA ICT-4"
-                 except: pass
-            
-            row_data = [
-                sl_no,
-                "Merto Zone", 
-                "OMC- Metro- West Circle",
-                "400KV Shankarpally",
-                formatted_name,
-                "-",
-                f"{max_demand:.2f}" if max_demand else "-",
-                f"{avg_load:.2f}" if avg_load else "-",
-                f"{pct_load:.2f}" if pct_load else "-",
-                "-"
-            ]
-            
-            for i, val in enumerate(row_data):
-                cell = ws2.cell(row=row_idx, column=i+1, value=val)
-                cell.alignment = center_align
-                cell.border = thin_border
-                
-            row_idx += 1
-            sl_no += 1
-
-        for i in range(1, ws2.max_column + 1):
-            col_letter = get_column_letter(i)
-            max_len = 0
-            for cell in ws2[col_letter]:
-                if cell.row <= 4: continue
-                try:
-                    if cell.value and len(str(cell.value)) > max_len:
-                        max_len = len(str(cell.value))
-                except: pass
-            ws2.column_dimensions[col_letter].width = max(max_len + 2, 12)
-            
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
@@ -5118,6 +5196,229 @@ async def get_line_losses_report_preview(
         print(error_msg)
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
+async def _generate_line_losses_report_wb(year: int, month: int):
+    import calendar
+    from openpyxl.styles import PatternFill, Border, Side, Alignment, Font
+    from openpyxl.utils import get_column_letter
+    
+    # --- Common Styles ---
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    bold_font = Font(bold=True)
+    
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Line Losses"
+    
+    month_name = calendar.month_name[month]
+    
+    # 1. Headers
+    # Row 1: Title
+    ws.merge_cells('A1:T1')
+    c = ws.cell(row=1, column=1, value=f"400KV SHANKARAPALLY SS- ENERGY LOSSES FOR THE MONTH {month_name}-{year}")
+    c.font = bold_font; c.alignment = center_align; c.border = thin_border
+    
+    # Row 2: Main Headers
+    ws.merge_cells('A2:A3')
+    c = ws.cell(row=2, column=1, value="Sl.\nNo.")
+    c.alignment = center_align; c.border = thin_border
+    
+    ws.merge_cells('B2:B3')
+    c = ws.cell(row=2, column=2, value="Name of the Feeder")
+    c.alignment = center_align; c.border = thin_border
+    
+    ws.merge_cells('C2:J2')
+    c = ws.cell(row=2, column=3, value="Shankarapally End")
+    c.font = bold_font; c.alignment = center_align; c.border = thin_border
+    
+    ws.merge_cells('K2:R2')
+    c = ws.cell(row=2, column=11, value="Other End")
+    c.font = bold_font; c.alignment = center_align; c.border = thin_border
+    
+    ws.merge_cells('S2:S3')
+    c = ws.cell(row=2, column=19, value="% Losses/\nCumulative\nLosses")
+    c.alignment = center_align; c.border = thin_border
+    
+    ws.merge_cells('T2:T3')
+    c = ws.cell(row=2, column=20, value="Remarks")
+    c.alignment = center_align; c.border = thin_border
+    
+    # Row 3: Sub Headers (Import/Export)
+    # Shankarpally
+    ws.merge_cells('C3:F3')
+    c = ws.cell(row=3, column=3, value="Import")
+    c.alignment = center_align; c.border = thin_border
+    
+    ws.merge_cells('G3:J3')
+    c = ws.cell(row=3, column=7, value="Export")
+    c.alignment = center_align; c.border = thin_border
+    
+    # Other End
+    ws.merge_cells('K3:N3')
+    c = ws.cell(row=3, column=11, value="Import")
+    c.alignment = center_align; c.border = thin_border
+    
+    ws.merge_cells('O3:R3')
+    c = ws.cell(row=3, column=15, value="Export")
+    c.alignment = center_align; c.border = thin_border
+    
+    # Row 4: Detailed Headers
+    sub_headers = [
+        "Initial Reading\nin MWH", "Final Reading in\nMWH", "MF", "Consumption",
+        "Initial Reading\nin MWH", "Final Reading in\nMWH", "MF", "Consumption",
+        "Initial Reading\nin MWH", "Final Reading in\nMWH", "MF", "Consumption",
+        "Initial Reading\nin MWH", "Final Reading in\nMWH", "MF", "Consumption"
+    ]
+    
+    for i, h in enumerate(sub_headers):
+        cell = ws.cell(row=4, column=i+3, value=h)
+        cell.alignment = center_align; cell.border = thin_border; cell.font = bold_font
+        
+    # Row 5: Column Letters/Formulas
+    letters = ["A", "B", "C", "D=(B-A)*C", "E", "F", "G", "H=(F-E)*G", 
+               "I", "J", "K", "L=(J-I)*K", "M", "N", "O", "P=(N-M)*O"]
+    
+    for i, l in enumerate(letters):
+        cell = ws.cell(row=5, column=i+3, value=l)
+        cell.alignment = center_align; cell.border = thin_border; cell.font = bold_font
+        
+    ws.cell(row=5, column=19, value="Q=(D+L-H-P)/(D+L)").alignment = center_align
+    ws.cell(row=5, column=19).border = thin_border
+    ws.cell(row=5, column=20, value="").border = thin_border # Remarks
+    
+    # 2. Fetch Data
+    all_feeders = await db.feeders.find({}, {"_id": 0}).to_list(100)
+    
+    FEEDER_MAPPING = {
+        "400 KV Shanakrapally-MHRM-2": "400KV MAHESHWARAM-2",
+        "400 KV Shanakrapally-MHRM-1": "400KV MAHESHWARAM-1",
+        "400 KV Shanakrapally-Narsapur-1": "400KV NARSAPUR-1",
+        "400 KV Shanakrapally-Narsapur-2": "400KV NARSAPUR-2",
+        "400 KV KethiReddyPally-1": "400KV KETHIREDDYPALLY-1",
+        "400 KV KethiReddyPally-2": "400KV KETHIREDDYPALLY-2",
+        "220 KV Parigi-1": "220KV PARIGI-1",
+        "220 KV Parigi-2": "220KV PARIGI-2",
+        "220 KV Tandur": "220KV THANDUR",
+        "220 KV Gachibowli-1": "220KV GACHIBOWLI-1",
+        "220 KV Gachibowli-2": "220KV GACHIBOWLI-2",
+        "220 KV KethiReddyPally": "220KV KETHIREDDYPALLY",
+        "220 KV Yeddumailaram-1": "220KV YEDDUMAILARAM-1",
+        "220 KV Yeddumailaram-2": "220KV YEDDUMAILARAM-2",
+        "220 KV Sadasivapet-1": "220KV SADASIVAPET-1",
+        "220 KV Sadasivapet-2": "220KV SADASIVAPET-2"
+    }
+
+    FEEDER_ORDER = [
+        "400KV MAHESHWARAM-2", "400KV MAHESHWARAM-1", "400KV NARSAPUR-1", "400KV NARSAPUR-2",
+        "400KV KETHIREDDYPALLY-1", "400KV KETHIREDDYPALLY-2", "220KV PARIGI-1", "220KV PARIGI-2",
+        "220KV THANDUR", "220KV GACHIBOWLI-1", "220KV GACHIBOWLI-2", "220KV KETHIREDDYPALLY",
+        "220KV YEDDUMAILARAM-1", "220KV YEDDUMAILARAM-2", "220KV SADASIVAPET-1", "220KV SADASIVAPET-2"
+    ]
+    
+    target_feeders = []
+    for f in all_feeders:
+        if f['name'] in FEEDER_MAPPING:
+            f['display_name'] = FEEDER_MAPPING[f['name']]
+            target_feeders.append(f)
+
+    target_feeders.sort(key=lambda x: FEEDER_ORDER.index(x['display_name']) if x['display_name'] in FEEDER_ORDER else 999)
+    
+    start_date = f"{year}-{month:02d}-01"
+    if month == 12: end_date = f"{year + 1}-01-01"
+    else: end_date = f"{year}-{month + 1:02d}-01"
+        
+    entries = await db.entries.find(
+        {"date": {"$gte": start_date, "$lt": end_date}},
+        {"_id": 0}
+    ).to_list(5000)
+    
+    entries_by_feeder = {}
+    for e in entries:
+        if e['feeder_id'] not in entries_by_feeder:
+            entries_by_feeder[e['feeder_id']] = []
+        entries_by_feeder[e['feeder_id']].append(e)
+        
+    row_idx = 6
+    for idx, f in enumerate(target_feeders):
+        f_entries = entries_by_feeder.get(f['id'], [])
+        f_entries.sort(key=lambda x: x['date'])
+        
+        vals = [0] * 16 # 4 groups of 4
+        pct_loss = 0
+        
+        if f_entries:
+            first = f_entries[0]
+            last = f_entries[-1]
+            
+            # S-Imp
+            si_init = first.get('end1_import_initial', 0) or 0
+            si_final = last.get('end1_import_final', 0) or 0
+            si_mf = f.get('end1_import_mf', 1) or 1
+            si_cons = (si_final - si_init) * si_mf
+            
+            # S-Exp
+            se_init = first.get('end1_export_initial', 0) or 0
+            se_final = last.get('end1_export_final', 0) or 0
+            se_mf = f.get('end1_export_mf', 1) or 1
+            se_cons = (se_final - se_init) * se_mf
+            
+            # O-Imp
+            oi_init = first.get('end2_import_initial', 0) or 0
+            oi_final = last.get('end2_import_final', 0) or 0
+            oi_mf = f.get('end2_import_mf', 1) or 1
+            oi_cons = (oi_final - oi_init) * oi_mf
+            
+            # O-Exp
+            oe_init = first.get('end2_export_initial', 0) or 0
+            oe_final = last.get('end2_export_final', 0) or 0
+            oe_mf = f.get('end2_export_mf', 1) or 1
+            oe_cons = (oe_final - oe_init) * oe_mf
+            
+            vals = [
+                si_init, si_final, si_mf, si_cons,
+                se_init, se_final, se_mf, se_cons,
+                oi_init, oi_final, oi_mf, oi_cons,
+                oe_init, oe_final, oe_mf, oe_cons
+            ]
+            
+            D = si_cons; L = oi_cons; H = se_cons; P = oe_cons
+            numerator = (D + L) - (H + P)
+            denominator = (D + L)
+            pct_loss = (numerator / denominator * 100) if denominator != 0 else 0
+
+        # Write Row
+        ws.cell(row=row_idx, column=1, value=idx+1).border = thin_border
+        ws.cell(row=row_idx, column=2, value=f['display_name']).border = thin_border
+        
+        for i, v in enumerate(vals):
+            cell = ws.cell(row=row_idx, column=i+3, value=v)
+            cell.number_format = '0.00'
+            cell.border = thin_border
+            cell.alignment = center_align
+            
+        cell = ws.cell(row=row_idx, column=19, value=pct_loss)
+        cell.number_format = '0.00'
+        cell.border = thin_border
+        cell.alignment = center_align
+        
+        ws.cell(row=row_idx, column=20, value="-").border = thin_border
+        
+        row_idx += 1
+        
+    # Auto-fit
+    for i in range(1, ws.max_column + 1):
+        col_letter = get_column_letter(i)
+        max_len = 0
+        for cell in ws[col_letter]:
+            if cell.row <= 5: continue
+            try:
+                if cell.value and len(str(cell.value)) > max_len:
+                    max_len = len(str(cell.value))
+            except: pass
+        ws.column_dimensions[col_letter].width = max(max_len + 2, 10)
+    
+    return wb
+
 @api_router.get("/reports/line-losses/export/{year}/{month}")
 async def export_line_losses_report(
     year: int,
@@ -5126,225 +5427,9 @@ async def export_line_losses_report(
 ):
     try:
         import calendar
-        from openpyxl.styles import PatternFill, Border, Side, Alignment, Font
-        from openpyxl.utils import get_column_letter
-        
-        # --- Common Styles ---
-        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-        center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
-        bold_font = Font(bold=True)
-        
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Line Losses"
-        
+        wb = await _generate_line_losses_report_wb(year, month)
         month_name = calendar.month_name[month]
         
-        # 1. Headers
-        # Row 1: Title
-        ws.merge_cells('A1:T1')
-        c = ws.cell(row=1, column=1, value=f"400KV SHANKARAPALLY SS- ENERGY LOSSES FOR THE MONTH {month_name}-{year}")
-        c.font = bold_font; c.alignment = center_align; c.border = thin_border
-        
-        # Row 2: Main Headers
-        ws.merge_cells('A2:A3')
-        c = ws.cell(row=2, column=1, value="Sl.\nNo.")
-        c.alignment = center_align; c.border = thin_border
-        
-        ws.merge_cells('B2:B3')
-        c = ws.cell(row=2, column=2, value="Name of the Feeder")
-        c.alignment = center_align; c.border = thin_border
-        
-        ws.merge_cells('C2:J2')
-        c = ws.cell(row=2, column=3, value="Shankarapally End")
-        c.font = bold_font; c.alignment = center_align; c.border = thin_border
-        
-        ws.merge_cells('K2:R2')
-        c = ws.cell(row=2, column=11, value="Other End")
-        c.font = bold_font; c.alignment = center_align; c.border = thin_border
-        
-        ws.merge_cells('S2:S3')
-        c = ws.cell(row=2, column=19, value="% Losses/\nCumulative\nLosses")
-        c.alignment = center_align; c.border = thin_border
-        
-        ws.merge_cells('T2:T3')
-        c = ws.cell(row=2, column=20, value="Remarks")
-        c.alignment = center_align; c.border = thin_border
-        
-        # Row 3: Sub Headers (Import/Export)
-        # Shankarpally
-        ws.merge_cells('C3:F3')
-        c = ws.cell(row=3, column=3, value="Import")
-        c.alignment = center_align; c.border = thin_border
-        
-        ws.merge_cells('G3:J3')
-        c = ws.cell(row=3, column=7, value="Export")
-        c.alignment = center_align; c.border = thin_border
-        
-        # Other End
-        ws.merge_cells('K3:N3')
-        c = ws.cell(row=3, column=11, value="Import")
-        c.alignment = center_align; c.border = thin_border
-        
-        ws.merge_cells('O3:R3')
-        c = ws.cell(row=3, column=15, value="Export")
-        c.alignment = center_align; c.border = thin_border
-        
-        # Row 4: Detailed Headers
-        sub_headers = [
-            "Initial Reading\nin MWH", "Final Reading in\nMWH", "MF", "Consumption",
-            "Initial Reading\nin MWH", "Final Reading in\nMWH", "MF", "Consumption",
-            "Initial Reading\nin MWH", "Final Reading in\nMWH", "MF", "Consumption",
-            "Initial Reading\nin MWH", "Final Reading in\nMWH", "MF", "Consumption"
-        ]
-        
-        for i, h in enumerate(sub_headers):
-            cell = ws.cell(row=4, column=i+3, value=h)
-            cell.alignment = center_align; cell.border = thin_border; cell.font = bold_font
-            
-        # Row 5: Column Letters/Formulas
-        letters = ["A", "B", "C", "D=(B-A)*C", "E", "F", "G", "H=(F-E)*G", 
-                   "I", "J", "K", "L=(J-I)*K", "M", "N", "O", "P=(N-M)*O"]
-        
-        for i, l in enumerate(letters):
-            cell = ws.cell(row=5, column=i+3, value=l)
-            cell.alignment = center_align; cell.border = thin_border; cell.font = bold_font
-            
-        ws.cell(row=5, column=19, value="Q=(D+L-H-P)/(D+L)").alignment = center_align
-        ws.cell(row=5, column=19).border = thin_border
-        ws.cell(row=5, column=20, value="").border = thin_border # Remarks
-        
-        # 2. Fetch Data
-        all_feeders = await db.feeders.find({}, {"_id": 0}).to_list(100)
-        
-        FEEDER_MAPPING = {
-            "400 KV Shanakrapally-MHRM-2": "400KV MAHESHWARAM-2",
-            "400 KV Shanakrapally-MHRM-1": "400KV MAHESHWARAM-1",
-            "400 KV Shanakrapally-Narsapur-1": "400KV NARSAPUR-1",
-            "400 KV Shanakrapally-Narsapur-2": "400KV NARSAPUR-2",
-            "400 KV KethiReddyPally-1": "400KV KETHIREDDYPALLY-1",
-            "400 KV KethiReddyPally-2": "400KV KETHIREDDYPALLY-2",
-            "220 KV Parigi-1": "220KV PARIGI-1",
-            "220 KV Parigi-2": "220KV PARIGI-2",
-            "220 KV Tandur": "220KV THANDUR",
-            "220 KV Gachibowli-1": "220KV GACHIBOWLI-1",
-            "220 KV Gachibowli-2": "220KV GACHIBOWLI-2",
-            "220 KV KethiReddyPally": "220KV KETHIREDDYPALLY",
-            "220 KV Yeddumailaram-1": "220KV YEDDUMAILARAM-1",
-            "220 KV Yeddumailaram-2": "220KV YEDDUMAILARAM-2",
-            "220 KV Sadasivapet-1": "220KV SADASIVAPET-1",
-            "220 KV Sadasivapet-2": "220KV SADASIVAPET-2"
-        }
-
-        FEEDER_ORDER = [
-            "400KV MAHESHWARAM-2", "400KV MAHESHWARAM-1", "400KV NARSAPUR-1", "400KV NARSAPUR-2",
-            "400KV KETHIREDDYPALLY-1", "400KV KETHIREDDYPALLY-2", "220KV PARIGI-1", "220KV PARIGI-2",
-            "220KV THANDUR", "220KV GACHIBOWLI-1", "220KV GACHIBOWLI-2", "220KV KETHIREDDYPALLY",
-            "220KV YEDDUMAILARAM-1", "220KV YEDDUMAILARAM-2", "220KV SADASIVAPET-1", "220KV SADASIVAPET-2"
-        ]
-        
-        target_feeders = []
-        for f in all_feeders:
-            if f['name'] in FEEDER_MAPPING:
-                f['display_name'] = FEEDER_MAPPING[f['name']]
-                target_feeders.append(f)
-
-        target_feeders.sort(key=lambda x: FEEDER_ORDER.index(x['display_name']) if x['display_name'] in FEEDER_ORDER else 999)
-        
-        start_date = f"{year}-{month:02d}-01"
-        if month == 12: end_date = f"{year + 1}-01-01"
-        else: end_date = f"{year}-{month + 1:02d}-01"
-            
-        entries = await db.entries.find(
-            {"date": {"$gte": start_date, "$lt": end_date}},
-            {"_id": 0}
-        ).to_list(5000)
-        
-        entries_by_feeder = {}
-        for e in entries:
-            if e['feeder_id'] not in entries_by_feeder:
-                entries_by_feeder[e['feeder_id']] = []
-            entries_by_feeder[e['feeder_id']].append(e)
-            
-        row_idx = 6
-        for idx, f in enumerate(target_feeders):
-            f_entries = entries_by_feeder.get(f['id'], [])
-            f_entries.sort(key=lambda x: x['date'])
-            
-            vals = [0] * 16 # 4 groups of 4
-            pct_loss = 0
-            
-            if f_entries:
-                first = f_entries[0]
-                last = f_entries[-1]
-                
-                # S-Imp
-                si_init = first.get('end1_import_initial', 0) or 0
-                si_final = last.get('end1_import_final', 0) or 0
-                si_mf = f.get('end1_import_mf', 1) or 1
-                si_cons = (si_final - si_init) * si_mf
-                
-                # S-Exp
-                se_init = first.get('end1_export_initial', 0) or 0
-                se_final = last.get('end1_export_final', 0) or 0
-                se_mf = f.get('end1_export_mf', 1) or 1
-                se_cons = (se_final - se_init) * se_mf
-                
-                # O-Imp
-                oi_init = first.get('end2_import_initial', 0) or 0
-                oi_final = last.get('end2_import_final', 0) or 0
-                oi_mf = f.get('end2_import_mf', 1) or 1
-                oi_cons = (oi_final - oi_init) * oi_mf
-                
-                # O-Exp
-                oe_init = first.get('end2_export_initial', 0) or 0
-                oe_final = last.get('end2_export_final', 0) or 0
-                oe_mf = f.get('end2_export_mf', 1) or 1
-                oe_cons = (oe_final - oe_init) * oe_mf
-                
-                vals = [
-                    si_init, si_final, si_mf, si_cons,
-                    se_init, se_final, se_mf, se_cons,
-                    oi_init, oi_final, oi_mf, oi_cons,
-                    oe_init, oe_final, oe_mf, oe_cons
-                ]
-                
-                D = si_cons; L = oi_cons; H = se_cons; P = oe_cons
-                numerator = (D + L) - (H + P)
-                denominator = (D + L)
-                pct_loss = (numerator / denominator * 100) if denominator != 0 else 0
-
-            # Write Row
-            ws.cell(row=row_idx, column=1, value=idx+1).border = thin_border
-            ws.cell(row=row_idx, column=2, value=f['display_name']).border = thin_border
-            
-            for i, v in enumerate(vals):
-                cell = ws.cell(row=row_idx, column=i+3, value=v)
-                cell.number_format = '0.00'
-                cell.border = thin_border
-                cell.alignment = center_align
-                
-            cell = ws.cell(row=row_idx, column=19, value=pct_loss)
-            cell.number_format = '0.00'
-            cell.border = thin_border
-            cell.alignment = center_align
-            
-            ws.cell(row=row_idx, column=20, value="-").border = thin_border
-            
-            row_idx += 1
-            
-        # Auto-fit
-        for i in range(1, ws.max_column + 1):
-            col_letter = get_column_letter(i)
-            max_len = 0
-            for cell in ws[col_letter]:
-                if cell.row <= 5: continue
-                try:
-                    if cell.value and len(str(cell.value)) > max_len:
-                        max_len = len(str(cell.value))
-                except: pass
-            ws.column_dimensions[col_letter].width = max(max_len + 2, 10)
-            
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
@@ -5514,128 +5599,135 @@ async def get_ptr_max_min_preview(
     return data
 
 @api_router.get("/reports/ptr-max-min-format1/export/{year}/{month}")
+async def _generate_ptr_max_min_report_wb(year: int, month: int, current_user: User):
+    data = await get_ptr_max_min_preview(year, month, current_user)
+    
+    month_name = calendar.month_name[month]
+    
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "PTR Max-Min Format-1"
+    
+    # Styles
+    bold_font = Font(bold=True)
+    center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    
+    # Headers
+    ws.merge_cells('A1:T1')
+    c = ws.cell(row=1, column=1, value="FORMAT-I")
+    c.font = bold_font; c.alignment = center_align; c.border = thin_border
+    
+    ws.merge_cells('A2:A3')
+    c = ws.cell(row=2, column=1, value="ZONE: CE/METRO/HYD")
+    c.font = bold_font; c.alignment = center_align; c.border = thin_border
+    
+    ws.merge_cells('B2:R2')
+    c = ws.cell(row=2, column=2, value=f"NORMAL & MAXIMUM / MINIMUM LOADING ON PTRs FOR THE MONTH OF {month_name}-{year} in SE/OMC/Metro-West Circle")
+    c.font = bold_font; c.alignment = center_align; c.border = thin_border
+    
+    ws.merge_cells('S2:S4')
+    c = ws.cell(row=2, column=19, value=f"MD\nreached\nso far in\n{year}")
+    c.font = bold_font; c.alignment = center_align; c.border = thin_border
+    
+    ws.merge_cells('T2:T4')
+    c = ws.cell(row=2, column=20, value="MD\nreached\nso far")
+    c.font = bold_font; c.alignment = center_align; c.border = thin_border
+    
+    # Row 3
+    ws.merge_cells('E3:F3')
+    c = ws.cell(row=3, column=5, value="GENERAL\nLOADING")
+    c.font = bold_font; c.alignment = center_align; c.border = thin_border
+    
+    ws.merge_cells('G3:L3')
+    c = ws.cell(row=3, column=7, value="MAXIMUM LOAD DETAILS")
+    c.font = bold_font; c.alignment = center_align; c.border = thin_border
+    
+    ws.merge_cells('M3:R3')
+    c = ws.cell(row=3, column=13, value="MINIMUM LOAD DETAILS")
+    c.font = bold_font; c.alignment = center_align; c.border = thin_border
+    
+    # Row 4
+    headers_r4 = [
+        "DISTRICT\nNAME", "SUB-STATION\nNAME", "PTR\nHV/LV in\nKV", "PTR DETAILS/\nRATING IN\nMVA",
+        "MW", "MVAR",
+        "DATE", "TIME", "MW", "MVAR", "MVA", "BUS\nVOLTAGE IN\nKV @MAX",
+        "DATE", "TIME", "MW", "MVAR", "MVA", "BUS VOLTAGE\nIN KV @MIN\nLOADING"
+    ]
+    
+    for i, h in enumerate(headers_r4):
+        c = ws.cell(row=4, column=1+i, value=h)
+        c.font = bold_font; c.alignment = center_align; c.border = thin_border
+        
+    # Data
+    row_idx = 5
+    
+    def set_style(c):
+        c.border = thin_border
+        c.alignment = center_align
+        return c
+        
+    for item in data:
+        set_style(ws.cell(row=row_idx, column=1, value=item['district']))
+        set_style(ws.cell(row=row_idx, column=2, value=item['substation']))
+        set_style(ws.cell(row=row_idx, column=3, value=item['ptr_kv']))
+        set_style(ws.cell(row=row_idx, column=4, value=int(item['rating'])))
+        
+        set_style(ws.cell(row=row_idx, column=5, value=f"{item['general']['mw']:.2f}"))
+        set_style(ws.cell(row=row_idx, column=6, value=f"{item['general']['mvar']:.2f}"))
+        
+        m = item['max']
+        if m:
+            set_style(ws.cell(row=row_idx, column=7, value=format_date(m['date'])))
+            set_style(ws.cell(row=row_idx, column=8, value=m['time']))
+            set_style(ws.cell(row=row_idx, column=9, value=f"{m['mw']:.2f}"))
+            set_style(ws.cell(row=row_idx, column=10, value=f"{m['mvar']:.2f}"))
+            set_style(ws.cell(row=row_idx, column=11, value=f"{m['mva']:.2f}"))
+        else:
+            for c in range(7, 12): set_style(ws.cell(row=row_idx, column=c, value="-"))
+
+        set_style(ws.cell(row=row_idx, column=12, value=""))
+        
+        m = item['min']
+        if m:
+            set_style(ws.cell(row=row_idx, column=13, value=format_date(m['date'])))
+            set_style(ws.cell(row=row_idx, column=14, value=m['time']))
+            set_style(ws.cell(row=row_idx, column=15, value=f"{m['mw']:.2f}"))
+            set_style(ws.cell(row=row_idx, column=16, value=f"{m['mvar']:.2f}"))
+            set_style(ws.cell(row=row_idx, column=17, value=f"{m['mva']:.2f}"))
+        else:
+            for c in range(13, 18): set_style(ws.cell(row=row_idx, column=c, value="-"))
+
+        set_style(ws.cell(row=row_idx, column=18, value=""))
+        
+        set_style(ws.cell(row=row_idx, column=19, value=""))
+        set_style(ws.cell(row=row_idx, column=20, value=""))
+        
+        row_idx += 1
+        
+    # Merge District and Substation
+    if row_idx > 5:
+        ws.merge_cells(f'A5:A{row_idx-1}')
+        ws.cell(row=5, column=1).alignment = center_align
+        ws.merge_cells(f'B5:B{row_idx-1}')
+        ws.cell(row=5, column=2).alignment = center_align
+        
+    # Auto-width
+    for col in range(1, 21):
+        ws.column_dimensions[get_column_letter(col)].width = 12
+        
+    return wb
+
+@api_router.get("/reports/ptr-max-min-format1/export/{year}/{month}")
 async def export_ptr_max_min_report(
     year: int,
     month: int,
     current_user: User = Depends(get_current_user)
 ):
     try:
-        data = await get_ptr_max_min_preview(year, month, current_user)
-        
+        wb = await _generate_ptr_max_min_report_wb(year, month, current_user)
         month_name = calendar.month_name[month]
         
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "PTR Max-Min Format-1"
-        
-        # Styles
-        bold_font = Font(bold=True)
-        center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
-        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-        
-        # Headers
-        ws.merge_cells('A1:T1')
-        c = ws.cell(row=1, column=1, value="FORMAT-I")
-        c.font = bold_font; c.alignment = center_align; c.border = thin_border
-        
-        ws.merge_cells('A2:A3')
-        c = ws.cell(row=2, column=1, value="ZONE: CE/METRO/HYD")
-        c.font = bold_font; c.alignment = center_align; c.border = thin_border
-        
-        ws.merge_cells('B2:R2')
-        c = ws.cell(row=2, column=2, value=f"NORMAL & MAXIMUM / MINIMUM LOADING ON PTRs FOR THE MONTH OF {month_name}-{year} in SE/OMC/Metro-West Circle")
-        c.font = bold_font; c.alignment = center_align; c.border = thin_border
-        
-        ws.merge_cells('S2:S4')
-        c = ws.cell(row=2, column=19, value=f"MD\nreached\nso far in\n{year}")
-        c.font = bold_font; c.alignment = center_align; c.border = thin_border
-        
-        ws.merge_cells('T2:T4')
-        c = ws.cell(row=2, column=20, value="MD\nreached\nso far")
-        c.font = bold_font; c.alignment = center_align; c.border = thin_border
-        
-        # Row 3
-        ws.merge_cells('E3:F3')
-        c = ws.cell(row=3, column=5, value="GENERAL\nLOADING")
-        c.font = bold_font; c.alignment = center_align; c.border = thin_border
-        
-        ws.merge_cells('G3:L3')
-        c = ws.cell(row=3, column=7, value="MAXIMUM LOAD DETAILS")
-        c.font = bold_font; c.alignment = center_align; c.border = thin_border
-        
-        ws.merge_cells('M3:R3')
-        c = ws.cell(row=3, column=13, value="MINIMUM LOAD DETAILS")
-        c.font = bold_font; c.alignment = center_align; c.border = thin_border
-        
-        # Row 4
-        headers_r4 = [
-            "DISTRICT\nNAME", "SUB-STATION\nNAME", "PTR\nHV/LV in\nKV", "PTR DETAILS/\nRATING IN\nMVA",
-            "MW", "MVAR",
-            "DATE", "TIME", "MW", "MVAR", "MVA", "BUS\nVOLTAGE IN\nKV @MAX",
-            "DATE", "TIME", "MW", "MVAR", "MVA", "BUS VOLTAGE\nIN KV @MIN\nLOADING"
-        ]
-        
-        for i, h in enumerate(headers_r4):
-            c = ws.cell(row=4, column=1+i, value=h)
-            c.font = bold_font; c.alignment = center_align; c.border = thin_border
-            
-        # Data
-        row_idx = 5
-        
-        def set_style(c):
-            c.border = thin_border
-            c.alignment = center_align
-            return c
-            
-        for item in data:
-            set_style(ws.cell(row=row_idx, column=1, value=item['district']))
-            set_style(ws.cell(row=row_idx, column=2, value=item['substation']))
-            set_style(ws.cell(row=row_idx, column=3, value=item['ptr_kv']))
-            set_style(ws.cell(row=row_idx, column=4, value=int(item['rating'])))
-            
-            set_style(ws.cell(row=row_idx, column=5, value=f"{item['general']['mw']:.2f}"))
-            set_style(ws.cell(row=row_idx, column=6, value=f"{item['general']['mvar']:.2f}"))
-            
-            m = item['max']
-            if m:
-                set_style(ws.cell(row=row_idx, column=7, value=format_date(m['date'])))
-                set_style(ws.cell(row=row_idx, column=8, value=m['time']))
-                set_style(ws.cell(row=row_idx, column=9, value=f"{m['mw']:.2f}"))
-                set_style(ws.cell(row=row_idx, column=10, value=f"{m['mvar']:.2f}"))
-                set_style(ws.cell(row=row_idx, column=11, value=f"{m['mva']:.2f}"))
-            else:
-                for c in range(7, 12): set_style(ws.cell(row=row_idx, column=c, value="-"))
-
-            set_style(ws.cell(row=row_idx, column=12, value=""))
-            
-            m = item['min']
-            if m:
-                set_style(ws.cell(row=row_idx, column=13, value=format_date(m['date'])))
-                set_style(ws.cell(row=row_idx, column=14, value=m['time']))
-                set_style(ws.cell(row=row_idx, column=15, value=f"{m['mw']:.2f}"))
-                set_style(ws.cell(row=row_idx, column=16, value=f"{m['mvar']:.2f}"))
-                set_style(ws.cell(row=row_idx, column=17, value=f"{m['mva']:.2f}"))
-            else:
-                for c in range(13, 18): set_style(ws.cell(row=row_idx, column=c, value="-"))
-
-            set_style(ws.cell(row=row_idx, column=18, value=""))
-            
-            set_style(ws.cell(row=row_idx, column=19, value=""))
-            set_style(ws.cell(row=row_idx, column=20, value=""))
-            
-            row_idx += 1
-            
-        # Merge District and Substation
-        if row_idx > 5:
-            ws.merge_cells(f'A5:A{row_idx-1}')
-            ws.cell(row=5, column=1).alignment = center_align
-            ws.merge_cells(f'B5:B{row_idx-1}')
-            ws.cell(row=5, column=2).alignment = center_align
-            
-        # Auto-width
-        for col in range(1, 21):
-            ws.column_dimensions[get_column_letter(col)].width = 12
-            
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
@@ -5650,7 +5742,7 @@ async def export_ptr_max_min_report(
     except Exception as e:
         import traceback
         error_msg = traceback.format_exc()
-        print(f"Export error traceback: {error_msg}")  # Ensure it prints to console
+        print(f"Export error traceback: {error_msg}")
         logger.error(f"Export error: {error_msg}")
         return JSONResponse(status_code=500, content={"detail": error_msg})
 
@@ -5804,118 +5896,106 @@ async def get_tl_max_loading_preview(
     return data
 
 @api_router.get("/reports/tl-max-loading-format4/export/{year}/{month}")
+async def _generate_tl_max_loading_report_wb(year: int, month: int, current_user: User):
+    print(f"Exporting TL Max Loading for {year}-{month}")
+    data = await get_tl_max_loading_preview(year, month, current_user)
+    print(f"Data fetched: {len(data)} rows")
+    month_name = calendar.month_name[month]
+    
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "TL Max Loading Format-4"
+    
+    # Styles
+    bold_font = Font(bold=True)
+    center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+    
+    # Header Row 1
+    ws.merge_cells('A1:L1')
+    c = ws.cell(row=1, column=1, value=f"FORMAT-IV - SE/OMC/Metro-West Circle for the Month of {month_name}-{year}")
+    c.font = bold_font; c.alignment = center_align; c.border = thin_border
+    
+    # Header Row 2
+    ws.merge_cells('A2:D2')
+    c = ws.cell(row=2, column=1, value="ZONE CE/METRO/HYD")
+    c.font = bold_font; c.alignment = center_align; c.border = thin_border
+    
+    ws.merge_cells('F2:I2')
+    c = ws.cell(row=2, column=6, value="MAXIMUM")
+    c.font = bold_font; c.alignment = center_align; c.border = thin_border
+    
+    headers = [
+        "SL.No", "DISTRICT\nNAME", "VOLTAGE\nLEVEL IN KV", "SUBSTATION\nNAME",
+        "TRANSMISSION LINE NAME",
+        "MW", "MVAR", "DATE", "TIME",
+        "MD\nreached\nin 2026", "MD\nreached\nso far", "REMARKS"
+    ]
+    
+    for i, h in enumerate(headers):
+        c = ws.cell(row=3, column=1+i, value=h)
+        c.font = bold_font; c.alignment = center_align; c.border = thin_border
+        
+    # Data Rows
+    row_idx = 4
+    
+    def set_style(c):
+        c.border = thin_border
+        c.alignment = center_align
+        return c
+        
+    for item in data:
+        set_style(ws.cell(row=row_idx, column=1, value=item['sl_no']))
+        set_style(ws.cell(row=row_idx, column=2, value=item['district']))
+        set_style(ws.cell(row=row_idx, column=3, value=item['voltage']))
+        set_style(ws.cell(row=row_idx, column=4, value=item['substation']))
+        set_style(ws.cell(row=row_idx, column=5, value=item['line_name']))
+        set_style(ws.cell(row=row_idx, column=6, value=item['mw']))
+        set_style(ws.cell(row=row_idx, column=7, value=item['mvar']))
+        set_style(ws.cell(row=row_idx, column=8, value=item['date']))
+        set_style(ws.cell(row=row_idx, column=9, value=item['time']))
+        set_style(ws.cell(row=row_idx, column=10, value=item['md_2026']))
+        set_style(ws.cell(row=row_idx, column=11, value=item['md_so_far']))
+        set_style(ws.cell(row=row_idx, column=12, value=item['remarks']))
+        row_idx += 1
+        
+    # Merging Logic
+    # District (Col 2), Substation (Col 4) -> Merge for all rows
+    if row_idx > 4:
+        # District
+        ws.merge_cells(f'B4:B{row_idx-1}')
+        
+        # Substation
+        ws.merge_cells(f'D4:D{row_idx-1}')
+        
+        # Voltage (Col 3) - Split into 400KV and 220KV blocks
+        num_400 = 8
+        num_220 = 10
+        
+        start_row = 4
+        if len(data) >= num_400:
+            ws.merge_cells(f'C{start_row}:C{start_row+num_400-1}')
+        
+        if len(data) >= num_400 + num_220:
+            ws.merge_cells(f'C{start_row+num_400}:C{start_row+num_400+num_220-1}')
+            
+    # Column Widths
+    ws.column_dimensions['E'].width = 30 # Line Name
+    for col in [1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12]:
+         ws.column_dimensions[get_column_letter(col)].width = 15
+
+    return wb
+
+@api_router.get("/reports/tl-max-loading-format4/export/{year}/{month}")
 async def export_tl_max_loading_report(
     year: int,
     month: int,
     current_user: User = Depends(get_current_user)
 ):
     try:
-        print(f"Exporting TL Max Loading for {year}-{month}")
-        data = await get_tl_max_loading_preview(year, month, current_user)
-        print(f"Data fetched: {len(data)} rows")
+        wb = await _generate_tl_max_loading_report_wb(year, month, current_user)
         month_name = calendar.month_name[month]
         
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "TL Max Loading Format-4"
-        
-        # Styles
-        bold_font = Font(bold=True)
-        center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
-        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
-        
-        # Header Row 1
-        ws.merge_cells('A1:L1')
-        c = ws.cell(row=1, column=1, value=f"FORMAT-IV - SE/OMC/Metro-West Circle for the Month of {month_name}-{year}")
-        c.font = bold_font; c.alignment = center_align; c.border = thin_border
-        
-        # Header Row 2
-        # ZONE CE/METRO/HYD (A2:D2) - Actually image shows Zone header spanning multiple columns or just one?
-        # Re-checking image layout description:
-        # "ZONE CE/METRO/HYD" is likely top left, but user said "Strictly in the layout shown in the attached image".
-        # Based on typical layout:
-        # A2:D2 -> "ZONE CE/METRO/HYD"
-        # E2:L2 -> "MAXIMUM"
-        
-        # Wait, the image usually has columns:
-        # SL.No, District, Voltage, Substation, Line Name, MW, MVAR, DATE, TIME, MD 2026, MD So far, Remarks
-        # Total 12 Columns.
-        
-        ws.merge_cells('A2:D2')
-        c = ws.cell(row=2, column=1, value="ZONE CE/METRO/HYD")
-        c.font = bold_font; c.alignment = center_align; c.border = thin_border
-        
-        ws.merge_cells('F2:I2')
-        c = ws.cell(row=2, column=6, value="MAXIMUM")
-        c.font = bold_font; c.alignment = center_align; c.border = thin_border
-        
-        # MD headers might be in Row 2 or 3? Usually Row 2/3 merged.
-        # Let's assume MD headers start at Row 2 if they are "MD reached in 2026".
-        # Let's treat Row 3 as the main column header row.
-        
-        headers = [
-            "SL.No", "DISTRICT\nNAME", "VOLTAGE\nLEVEL IN KV", "SUBSTATION\nNAME",
-            "TRANSMISSION LINE NAME",
-            "MW", "MVAR", "DATE", "TIME",
-            "MD\nreached\nin 2026", "MD\nreached\nso far", "REMARKS"
-        ]
-        
-        for i, h in enumerate(headers):
-            c = ws.cell(row=3, column=1+i, value=h)
-            c.font = bold_font; c.alignment = center_align; c.border = thin_border
-            
-        # Data Rows
-        row_idx = 4
-        
-        def set_style(c):
-            c.border = thin_border
-            c.alignment = center_align
-            return c
-            
-        for item in data:
-            set_style(ws.cell(row=row_idx, column=1, value=item['sl_no']))
-            set_style(ws.cell(row=row_idx, column=2, value=item['district']))
-            set_style(ws.cell(row=row_idx, column=3, value=item['voltage']))
-            set_style(ws.cell(row=row_idx, column=4, value=item['substation']))
-            set_style(ws.cell(row=row_idx, column=5, value=item['line_name']))
-            set_style(ws.cell(row=row_idx, column=6, value=item['mw']))
-            set_style(ws.cell(row=row_idx, column=7, value=item['mvar']))
-            set_style(ws.cell(row=row_idx, column=8, value=item['date']))
-            set_style(ws.cell(row=row_idx, column=9, value=item['time']))
-            set_style(ws.cell(row=row_idx, column=10, value=item['md_2026']))
-            set_style(ws.cell(row=row_idx, column=11, value=item['md_so_far']))
-            set_style(ws.cell(row=row_idx, column=12, value=item['remarks']))
-            row_idx += 1
-            
-        # Merging Logic
-        # District (Col 2), Substation (Col 4) -> Merge for all rows
-        if row_idx > 4:
-            # District
-            ws.merge_cells(f'B4:B{row_idx-1}')
-            
-            # Substation
-            ws.merge_cells(f'D4:D{row_idx-1}')
-            
-            # Voltage (Col 3) - Split into 400KV and 220KV blocks
-            # 400KV is first 8 rows (indices 0-7 in data) -> Rows 4 to 11
-            # 220KV is next 10 rows (indices 8-17) -> Rows 12 to 21
-            
-            # Ensure we don't crash if data is missing
-            num_400 = 8
-            num_220 = 10
-            
-            start_row = 4
-            if len(data) >= num_400:
-                ws.merge_cells(f'C{start_row}:C{start_row+num_400-1}')
-            
-            if len(data) >= num_400 + num_220:
-                ws.merge_cells(f'C{start_row+num_400}:C{start_row+num_400+num_220-1}')
-                
-        # Column Widths
-        ws.column_dimensions['E'].width = 30 # Line Name
-        for col in [1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12]:
-             ws.column_dimensions[get_column_letter(col)].width = 15
-
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
@@ -5927,7 +6007,6 @@ async def export_tl_max_loading_report(
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
-
     except Exception as e:
         import traceback
         error_msg = traceback.format_exc()
@@ -5940,6 +6019,155 @@ async def export_tl_max_loading_report(
         except:
             pass
         return JSONResponse(status_code=500, content={"detail": error_msg})
+
+@api_router.post("/reports/send-mail")
+async def send_reports_email_endpoint(
+    request: EmailReportRequest,
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        year = request.year
+        month = request.month
+        recipient_email = request.email
+        month_name = calendar.month_name[month]
+        report_ids = request.report_ids
+        
+        attachments = []
+        errors = []
+        
+        # 1. Fortnight Report
+        if not report_ids or 'fortnight' in report_ids:
+            try:
+                wb = await _generate_fortnight_report_wb(year, month)
+                output = io.BytesIO()
+                wb.save(output)
+                output.seek(0)
+                attachments.append((f"Fortnight_Report_{month_name}_{year}.xlsx", output.read()))
+            except Exception as e:
+                import traceback
+                error_msg = f"Error generating Fortnight Report: {str(e)}\n{traceback.format_exc()}\n"
+                print(error_msg)
+                errors.append(error_msg)
+            
+        # 2. Energy Consumption (Optional, not currently in frontend list)
+        if report_ids and 'energy-consumption' in report_ids:
+            try:
+                wb = await _generate_energy_export_wb(year, month)
+                output = io.BytesIO()
+                wb.save(output)
+                output.seek(0)
+                attachments.append((f"Energy_Consumption_{month_name}_{year}.xlsx", output.read()))
+            except Exception as e:
+                import traceback
+                error_msg = f"Error generating Energy Report: {str(e)}\n{traceback.format_exc()}\n"
+                print(error_msg)
+                errors.append(error_msg)
+
+        # 3. Boundary Meter Report
+        if not report_ids or 'boundary-meter' in report_ids:
+            try:
+                wb = await _generate_boundary_meter_wb(year, month)
+                output = io.BytesIO()
+                wb.save(output)
+                output.seek(0)
+                attachments.append((f"Boundary_Meter_Report_{month_name}_{year}.xlsx", output.read()))
+            except Exception as e:
+                import traceback
+                error_msg = f"Error generating Boundary Meter Report: {str(e)}\n{traceback.format_exc()}\n"
+                print(error_msg)
+                errors.append(error_msg)
+             
+        # 4. KPI Report
+        if not report_ids or 'kpi' in report_ids:
+            try:
+                wb = await _generate_kpi_report_wb(year, month)
+                output = io.BytesIO()
+                wb.save(output)
+                output.seek(0)
+                attachments.append((f"KPI_Report_{month_name}_{year}.xlsx", output.read()))
+            except Exception as e:
+                import traceback
+                error_msg = f"Error generating KPI Report: {str(e)}\n{traceback.format_exc()}\n"
+                print(error_msg)
+                errors.append(error_msg)
+             
+        # 5. Line Losses
+        if not report_ids or 'line-losses' in report_ids:
+            try:
+                wb = await _generate_line_losses_report_wb(year, month)
+                output = io.BytesIO()
+                wb.save(output)
+                output.seek(0)
+                attachments.append((f"Line_Losses_{month_name}_{year}.xlsx", output.read()))
+            except Exception as e:
+                import traceback
+                error_msg = f"Error generating Line Losses Report: {str(e)}\n{traceback.format_exc()}\n"
+                print(error_msg)
+                errors.append(error_msg)
+             
+        # 6. Daily Max MVA
+        if not report_ids or 'daily-max-mva' in report_ids:
+            try:
+                wb = await _generate_daily_max_mva_wb(year, month)
+                output = io.BytesIO()
+                wb.save(output)
+                output.seek(0)
+                attachments.append((f"Daily_Max_MVA_{month_name}_{year}.xlsx", output.read()))
+            except Exception as e:
+                import traceback
+                error_msg = f"Error generating Daily Max MVA Report: {str(e)}\n{traceback.format_exc()}\n"
+                print(error_msg)
+                errors.append(error_msg)
+             
+        # 7. PTR Max Min
+        if not report_ids or 'ptr-max-min' in report_ids:
+            try:
+                wb = await _generate_ptr_max_min_report_wb(year, month, current_user)
+                output = io.BytesIO()
+                wb.save(output)
+                output.seek(0)
+                attachments.append((f"PTR_Max_Min_{month_name}_{year}.xlsx", output.read()))
+            except Exception as e:
+                import traceback
+                error_msg = f"Error generating PTR Max Min Report: {str(e)}\n{traceback.format_exc()}\n"
+                print(error_msg)
+                errors.append(error_msg)
+
+        # 8. TL Max Loading
+        if not report_ids or 'tl-max-loading' in report_ids:
+            try:
+                wb = await _generate_tl_max_loading_report_wb(year, month, current_user)
+                output = io.BytesIO()
+                wb.save(output)
+                output.seek(0)
+                attachments.append((f"TL_Max_Loading_{month_name}_{year}.xlsx", output.read()))
+            except Exception as e:
+                import traceback
+                error_msg = f"Error generating TL Max Loading Report: {str(e)}\n{traceback.format_exc()}\n"
+                print(error_msg)
+                errors.append(error_msg)
+        
+        if errors:
+            error_content = "\n".join(errors)
+            attachments.append(("generation_errors.txt", error_content.encode('utf-8')))
+             
+        if not attachments:
+            raise HTTPException(status_code=400, detail="No reports could be generated for this period.")
+            
+        # Send Email in background
+        import asyncio
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, send_reports_email, recipient_email, attachments)
+        
+        return {"message": f"Reports sent successfully to {recipient_email}"}
+        
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        import traceback
+        error_msg = traceback.format_exc()
+        print(f"Send mail error: {error_msg}")
+        return JSONResponse(status_code=500, content={"detail": str(e)})
 
 app.include_router(api_router)
 
