@@ -1668,6 +1668,528 @@ async def delete_max_min_entry(entry_id: str, current_user: User = Depends(get_c
         raise HTTPException(status_code=404, detail="Entry not found")
     return {"message": "Entry deleted successfully"}
 
+# ---------------------------------------------------------
+# Max-Min Summary Logic Helpers
+# ---------------------------------------------------------
+
+DOUBLE_CIRCUIT_PAIRS = [
+    {"names": ["400KV MAHESHWARAM-2", "400KV MAHESHWARAM-1"]},
+    {"names": ["400KV NARSAPUR-1", "400KV NARSAPUR-2"]},
+    {"names": ["400KV KETHIREDDYPALLY-1", "400KV KETHIREDDYPALLY-2"]},
+    {"names": ["400KV NIZAMABAD-1", "400KV NIZAMABAD-2"]},
+    {"names": ["220KV PARIGI-1", "220KV PARIGI-2"]},
+    {"names": ["220KV GACHIBOWLI-1", "220KV GACHIBOWLI-2"]},
+    {"names": ["220KV YEDDUMAILARAM-1", "220KV YEDDUMAILARAM-2"]},
+    {"names": ["220KV SADASIVAPET-1", "220KV SADASIVAPET-2"]}
+]
+ICT_GROUP_NAMES = ["ICT-1 (315MVA)", "ICT-2 (315MVA)", "ICT-3 (315MVA)", "ICT-4 (500MVA)"]
+
+def normalize_time(t):
+    if not t: return ""
+    s = str(t).strip()
+    
+    # Handle "YYYY-MM-DD HH:MM:SS" or similar
+    if ' ' in s:
+        s = s.split(' ')[-1]
+        
+    # Handle HH:MM:SS vs HH:MM
+    if ':' in s:
+        parts = s.split(':')
+        if len(parts) >= 2:
+            try:
+                return f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+            except ValueError:
+                pass
+    return s
+
+def get_float_safe(val):
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return None
+
+def get_feeder_group_info(feeder_name):
+    # Check Double Circuit
+    for pair in DOUBLE_CIRCUIT_PAIRS:
+        if feeder_name in pair['names']:
+            return True, [n for n in pair['names'] if n != feeder_name]
+    
+    # Check ICT
+    if feeder_name in ICT_GROUP_NAMES:
+        return True, [n for n in ICT_GROUP_NAMES if n != feeder_name]
+        
+    return False, []
+
+def determine_leader(p_group_map):
+    global_max_mw = -float('inf')
+    candidate_leaders = [] # List of {'fid': fid, 'mw': mw, 'entry': entry}
+
+    for fid, entries in p_group_map.items():
+        local_max = -float('inf')
+        local_entry = None
+        for e in entries:
+            mw = get_float_safe(e.get('data', {}).get('max', {}).get('mw'))
+            if mw is not None and mw > local_max:
+                local_max = mw
+                local_entry = e
+        
+        if local_max > global_max_mw:
+            global_max_mw = local_max
+            candidate_leaders = [{'fid': fid, 'mw': local_max, 'entry': local_entry}]
+        elif local_max == global_max_mw and local_max > -float('inf'):
+            candidate_leaders.append({'fid': fid, 'mw': local_max, 'entry': local_entry})
+    
+    leader_id = None
+    
+    if not candidate_leaders:
+         # Fallback if no data
+         return list(p_group_map.keys())[0] if p_group_map else None
+
+    if len(candidate_leaders) == 1:
+        leader_id = candidate_leaders[0]['fid']
+    elif len(candidate_leaders) > 1:
+        # Sort candidates by ID for deterministic processing order (crucial for ties)
+        candidate_leaders.sort(key=lambda x: str(x['fid']))
+
+        # Tie Breaker: Calculate Sum of MW at the candidate's timestamp
+        best_sum = -float('inf')
+        best_leader = None
+        
+        for cand in candidate_leaders:
+            c_fid = cand['fid']
+            c_entry = cand['entry']
+            c_date = c_entry['date']
+            c_time = normalize_time(c_entry.get('data', {}).get('max', {}).get('time'))
+            
+            current_sum = 0
+            valid_timestamp = True
+            
+            # Sum all partners at this timestamp
+            for pid, pentries in p_group_map.items():
+                p_entry = next((e for e in pentries if e['date'] == c_date), None)
+                if not p_entry:
+                    valid_timestamp = False
+                    break
+                
+                p_time = normalize_time(p_entry.get('data', {}).get('max', {}).get('time'))
+                if p_time != c_time:
+                    valid_timestamp = False
+                    break
+                    
+                val = get_float_safe(p_entry.get('data', {}).get('max', {}).get('mw'))
+                if val is not None: current_sum += val
+            
+            if valid_timestamp and current_sum > best_sum:
+                best_sum = current_sum
+                best_leader = c_fid
+        
+        if best_leader:
+            leader_id = best_leader
+        else:
+            # Fallback: Sort by ID for determinism
+            candidate_leaders.sort(key=lambda x: x['fid'])
+            leader_id = candidate_leaders[0]['fid']
+            
+    return leader_id
+
+def calculate_standard_stats(period_entries, feeder_type):
+    stats = {}
+    
+    if feeder_type == 'bus_station':
+        # Initialize stats with defaults
+        stats = {
+            'max_400kv': -float('inf'), 'max_400kv_date': '-', 'max_400kv_time': '-',
+            'min_400kv': float('inf'), 'min_400kv_date': '-', 'min_400kv_time': '-',
+            'max_220kv': -float('inf'), 'max_220kv_date': '-', 'max_220kv_time': '-',
+            'min_220kv': float('inf'), 'min_220kv_date': '-', 'min_220kv_time': '-',
+            'max_load': -float('inf'), 'max_load_date': '-', 'max_load_time': '-', 'max_load_mvar': '-'
+        }
+
+        # 1. Find Max/Min Values
+        for e in period_entries:
+            d = e.get('data', {})
+            
+            # 400KV
+            v = get_float_safe(d.get('max_bus_voltage_400kv', {}).get('value'))
+            if v is not None and v > stats['max_400kv']: stats['max_400kv'] = v
+            v = get_float_safe(d.get('min_bus_voltage_400kv', {}).get('value'))
+            if v is not None and v < stats['min_400kv']: stats['min_400kv'] = v
+            
+            # 220KV
+            v = get_float_safe(d.get('max_bus_voltage_220kv', {}).get('value'))
+            if v is not None and v > stats['max_220kv']: stats['max_220kv'] = v
+            v = get_float_safe(d.get('min_bus_voltage_220kv', {}).get('value'))
+            if v is not None and v < stats['min_220kv']: stats['min_220kv'] = v
+
+            # Load (Independent)
+            v = get_float_safe(d.get('station_load', {}).get('max_mw'))
+            if v is not None and v > stats['max_load']:
+                stats['max_load'] = v
+                stats['max_load_date'] = e['date']
+                stats['max_load_time'] = d.get('station_load', {}).get('time', '-')
+                stats['max_load_mvar'] = d.get('station_load', {}).get('mvar', '-')
+
+        # 2. Collect Candidates & 3. Find Best Matches (Simplified for brevity as per original logic)
+        # For simplicity in this refactor, we will just use the FIRST occurrence for Max/Min if simple comparison
+        # But original logic had "Common Time Priority" for voltages.
+        # Let's keep it simple or copy full logic? 
+        # Copying full logic is safer.
+        
+        cands_max_400 = []
+        cands_min_400 = []
+        cands_max_220 = []
+        cands_min_220 = []
+
+        for e in period_entries:
+            d = e.get('data', {})
+            date = e['date']
+            
+            # Max 400
+            v = get_float_safe(d.get('max_bus_voltage_400kv', {}).get('value'))
+            if v == stats['max_400kv'] and v is not None:
+                cands_max_400.append({'date': date, 'time': str(d.get('max_bus_voltage_400kv', {}).get('time', '')).strip()})
+        
+            # Min 400
+            v = get_float_safe(d.get('min_bus_voltage_400kv', {}).get('value'))
+            if v == stats['min_400kv'] and v is not None:
+                cands_min_400.append({'date': date, 'time': str(d.get('min_bus_voltage_400kv', {}).get('time', '')).strip()})
+        
+            # Max 220
+            v = get_float_safe(d.get('max_bus_voltage_220kv', {}).get('value'))
+            if v == stats['max_220kv'] and v is not None:
+                cands_max_220.append({'date': date, 'time': str(d.get('max_bus_voltage_220kv', {}).get('time', '')).strip()})
+        
+            # Min 220
+            v = get_float_safe(d.get('min_bus_voltage_220kv', {}).get('value'))
+            if v == stats['min_220kv'] and v is not None:
+                cands_min_220.append({'date': date, 'time': str(d.get('min_bus_voltage_220kv', {}).get('time', '')).strip()})
+
+        def find_best(list_a, list_b):
+            for a in list_a:
+                for b in list_b:
+                    if a['date'] == b['date'] and a['time'] == b['time']:
+                        return a, b
+            res_a = list_a[0] if list_a else {'date': '-', 'time': '-'}
+            res_b = list_b[0] if list_b else {'date': '-', 'time': '-'}
+            return res_a, res_b
+
+        final_max_400, final_max_220 = find_best(cands_max_400, cands_max_220)
+        final_min_400, final_min_220 = find_best(cands_min_400, cands_min_220)
+
+        stats['max_400kv_date'] = final_max_400['date']
+        stats['max_400kv_time'] = final_max_400['time']
+        stats['max_220kv_date'] = final_max_220['date']
+        stats['max_220kv_time'] = final_max_220['time']
+
+        stats['min_400kv_date'] = final_min_400['date']
+        stats['min_400kv_time'] = final_min_400['time']
+        stats['min_220kv_date'] = final_min_220['date']
+        stats['min_220kv_time'] = final_min_220['time']
+        
+        # Cleanup
+        if stats['max_400kv'] == -float('inf'): stats['max_400kv'] = '-'
+        if stats['min_400kv'] == float('inf'): stats['min_400kv'] = '-'
+        if stats['max_220kv'] == -float('inf'): stats['max_220kv'] = '-'
+        if stats['min_220kv'] == float('inf'): stats['min_220kv'] = '-'
+        if stats['max_load'] == -float('inf'): stats['max_load'] = '-'
+        
+    else:
+        # Feeder / ICT Standard Logic
+        stats = {
+            'max_amps': -float('inf'), 'max_amps_date': '-', 'max_amps_time': '-',
+            'min_amps': float('inf'), 'min_amps_date': '-', 'min_amps_time': '-',
+            'max_mw': -float('inf'), 'max_mw_date': '-', 'max_mw_time': '-',
+            'min_mw': float('inf'), 'min_mw_date': '-', 'min_mw_time': '-',
+            'avg_amps': 0, 'avg_mw': 0
+        }
+        
+        total_amps = 0; count_amps = 0
+        total_mw = 0; count_mw = 0
+        
+        max_mw_entry = None
+        min_mw_entry = None
+        
+        for e in period_entries:
+            d = e.get('data', {})
+            
+            # Avg Amps
+            max_a = get_float_safe(d.get('max', {}).get('amps'))
+            min_a = get_float_safe(d.get('min', {}).get('amps'))
+            avg_a = get_float_safe(d.get('avg', {}).get('amps'))
+            if avg_a is None and max_a is not None and min_a is not None: avg_a = (max_a + min_a) / 2
+            if avg_a is not None: total_amps += avg_a; count_amps += 1
+                
+            # Avg MW
+            max_m = get_float_safe(d.get('max', {}).get('mw'))
+            min_m = get_float_safe(d.get('min', {}).get('mw'))
+            avg_m = get_float_safe(d.get('avg', {}).get('mw'))
+            if avg_m is None and max_m is not None and min_m is not None: avg_m = (max_m + min_m) / 2
+            if avg_m is not None: total_mw += avg_m; count_mw += 1
+            
+            # Find Max/Min MW Candidates
+            if max_m is not None and max_m > stats['max_mw']:
+                stats['max_mw'] = max_m
+                max_mw_entry = e
+            if min_m is not None and min_m < stats['min_mw']:
+                stats['min_mw'] = min_m
+                min_mw_entry = e
+                
+        # Fill Stats from Max/Min MW Entries
+        if max_mw_entry:
+            d = max_mw_entry.get('data', {})
+            stats['max_mw_date'] = max_mw_entry['date']
+            stats['max_mw_time'] = d.get('max', {}).get('time', '-')
+            stats['max_amps'] = get_float_safe(d.get('max', {}).get('amps'))
+            stats['max_amps_date'] = max_mw_entry['date']
+            stats['max_amps_time'] = d.get('max', {}).get('time', '-')
+
+        if min_mw_entry:
+            d = min_mw_entry.get('data', {})
+            stats['min_mw_date'] = min_mw_entry['date']
+            stats['min_mw_time'] = d.get('min', {}).get('time', '-')
+            stats['min_amps'] = get_float_safe(d.get('min', {}).get('amps'))
+            stats['min_amps_date'] = min_mw_entry['date']
+            stats['min_amps_time'] = d.get('min', {}).get('time', '-')
+            
+        # Cleanup
+        if stats['max_amps'] is None or stats['max_amps'] == -float('inf'): stats['max_amps'] = '-'
+        if stats['min_amps'] is None or stats['min_amps'] == float('inf'): stats['min_amps'] = '-'
+        stats['avg_amps'] = round(total_amps / count_amps, 2) if count_amps > 0 else '-'
+        if stats['max_mw'] == -float('inf'): stats['max_mw'] = '-'
+        if stats['min_mw'] == float('inf'): stats['min_mw'] = '-'
+        stats['avg_mw'] = round(total_mw / count_mw, 2) if count_mw > 0 else '-'
+        
+    return stats
+
+def calculate_coincident_stats(leader_entries, current_feeder_id, group_entries_map, feeder_type):
+    # This function uses leader_entries to find the "Best Coincident Timestamp"
+    # And then returns the stats for the CURRENT feeder at that timestamp.
+    
+    # Base calculation for Averages (independent of coincidence)
+    # We must calculate averages from the CURRENT feeder's entries, not Leader's.
+    current_feeder_entries = group_entries_map.get(current_feeder_id, [])
+    base_stats = calculate_standard_stats(current_feeder_entries, feeder_type)
+    
+    # Reset Max/Min fields to be populated by Coincident Logic
+    base_stats.update({
+        'max_mw': -float('inf'), 'max_mw_date': '-', 'max_mw_time': '-',
+        'max_amps': -float('inf'), 'max_amps_date': '-', 'max_amps_time': '-',
+        'min_mw': float('inf'), 'min_mw_date': '-', 'min_mw_time': '-',
+        'min_amps': float('inf'), 'min_amps_date': '-', 'min_amps_time': '-'
+    })
+
+    # 1. Gather Candidates from LEADER
+    max_candidates = []
+    min_candidates = []
+    
+    for e in leader_entries:
+        d = e.get('data', {})
+        mw_max = get_float_safe(d.get('max', {}).get('mw'))
+        time_max = normalize_time(d.get('max', {}).get('time'))
+        if mw_max is not None:
+            max_candidates.append({'entry': e, 'val': mw_max, 'date': e['date'], 'time': time_max})
+            
+        mw_min = get_float_safe(d.get('min', {}).get('mw'))
+        time_min = normalize_time(d.get('min', {}).get('time'))
+        if mw_min is not None:
+            min_candidates.append({'entry': e, 'val': mw_min, 'date': e['date'], 'time': time_min})
+            
+    # Sort
+    max_candidates.sort(key=lambda x: x['val'], reverse=True)
+    min_candidates.sort(key=lambda x: x['val']) # Ascending
+    
+    # Find Coincident Max Timestamp
+    found_max_timestamp = None # {date, time}
+    for cand in max_candidates:
+        c_date = cand['date']
+        c_time = cand['time']
+        
+        # Check all partners
+        all_match = True
+        for fid, entries in group_entries_map.items():
+            # Find entry for c_date
+            partner_entry = next((p for p in entries if p['date'] == c_date), None)
+            if not partner_entry:
+                all_match = False
+                break
+            
+            # Check time matches
+            p_time = normalize_time(partner_entry.get('data', {}).get('max', {}).get('time'))
+            if p_time != c_time:
+                all_match = False
+                break
+        
+        if all_match:
+            found_max_timestamp = {'date': c_date, 'time': c_time}
+            break
+            
+    # Find Coincident Min Timestamp
+    found_min_timestamp = None
+    for cand in min_candidates:
+        c_date = cand['date']
+        c_time = cand['time']
+        
+        all_match = True
+        for fid, entries in group_entries_map.items():
+            partner_entry = next((p for p in entries if p['date'] == c_date), None)
+            if not partner_entry:
+                all_match = False
+                break
+            p_time = normalize_time(partner_entry.get('data', {}).get('min', {}).get('time'))
+            if p_time != c_time:
+                all_match = False
+                break
+        
+        if all_match:
+            found_min_timestamp = {'date': c_date, 'time': c_time}
+            break
+            
+    # Update Stats with CURRENT FEEDER values at found timestamps
+    if found_max_timestamp:
+        # Find entry for current feeder at this date
+        entry = next((e for e in current_feeder_entries if e['date'] == found_max_timestamp['date']), None)
+        if entry:
+            d = entry.get('data', {})
+            base_stats['max_mw'] = get_float_safe(d.get('max', {}).get('mw'))
+            base_stats['max_mw_date'] = found_max_timestamp['date']
+            base_stats['max_mw_time'] = found_max_timestamp['time'] # Use common time
+            
+            base_stats['max_amps'] = get_float_safe(d.get('max', {}).get('amps'))
+            base_stats['max_amps_date'] = found_max_timestamp['date']
+            base_stats['max_amps_time'] = found_max_timestamp['time']
+            
+            if base_stats['max_mw'] is None: base_stats['max_mw'] = '-'
+            if base_stats['max_amps'] is None: base_stats['max_amps'] = '-'
+    else:
+        base_stats['max_mw'] = '-'
+        base_stats['max_mw_date'] = '-'
+        base_stats['max_mw_time'] = '-'
+        base_stats['max_amps'] = '-'
+        base_stats['max_amps_date'] = '-'
+        base_stats['max_amps_time'] = '-'
+
+    if found_min_timestamp:
+        entry = next((e for e in current_feeder_entries if e['date'] == found_min_timestamp['date']), None)
+        if entry:
+            d = entry.get('data', {})
+            base_stats['min_mw'] = get_float_safe(d.get('min', {}).get('mw'))
+            base_stats['min_mw_date'] = found_min_timestamp['date']
+            base_stats['min_mw_time'] = found_min_timestamp['time']
+            
+            base_stats['min_amps'] = get_float_safe(d.get('min', {}).get('amps'))
+            base_stats['min_amps_date'] = found_min_timestamp['date']
+            base_stats['min_amps_time'] = found_min_timestamp['time']
+
+            if base_stats['min_mw'] is None: base_stats['min_mw'] = '-'
+            if base_stats['min_amps'] is None: base_stats['min_amps'] = '-'
+    else:
+        base_stats['min_mw'] = '-'
+        base_stats['min_mw_date'] = '-'
+        base_stats['min_mw_time'] = '-'
+        base_stats['min_amps'] = '-'
+        base_stats['min_amps_date'] = '-'
+        base_stats['min_amps_time'] = '-'
+        
+    return base_stats
+
+@api_router.get("/max-min/summary/{feeder_id}/{year}/{month}")
+async def get_monthly_summary(
+    feeder_id: str,
+    year: int,
+    month: int,
+    current_user: User = Depends(get_current_user)
+):
+    # 1. Fetch Feeder
+    feeder = await db.max_min_feeders.find_one({"id": feeder_id}, {"_id": 0})
+    if not feeder:
+        return JSONResponse(status_code=404, content={"message": "Feeder not found"})
+
+    # 2. Check if Special Logic Applies
+    # is_special = False
+    # partner_names = []
+    
+    # # Check Double Circuit
+    # for pair in DOUBLE_CIRCUIT_PAIRS:
+    #     if feeder['name'] in pair['names']:
+    #         is_special = True
+    #         partner_names = [n for n in pair['names'] if n != feeder['name']]
+    #         break
+            
+    # # Check ICT
+    # if not is_special and feeder['name'] in ICT_GROUP_NAMES:
+    #     is_special = True
+    #     partner_names = [n for n in ICT_GROUP_NAMES if n != feeder['name']]
+
+    # if not is_special:
+    #     return None
+
+    # 3. Fetch Partner Feeders & Entries
+    # partner_feeders = await db.max_min_feeders.find({"name": {"$in": partner_names}}).to_list(100)
+    # partner_ids = [p['id'] for p in partner_feeders]
+    
+    start_date = f"{year}-{month:02d}-01"
+    if month == 12:
+        end_date = f"{year + 1}-01-01"
+    else:
+        end_date = f"{year}-{month + 1:02d}-01"
+
+    # Fetch Target Entries
+    target_entries = await db.max_min_entries.find(
+        {"feeder_id": feeder_id, "date": {"$gte": start_date, "$lt": end_date}},
+        {"_id": 0}
+    ).to_list(1000)
+    
+    # Fetch Partner Entries
+    # group_entries_map = {}
+    # if partner_ids:
+    #     p_entries = await db.max_min_entries.find(
+    #         {"feeder_id": {"$in": partner_ids}, "date": {"$gte": start_date, "$lt": end_date}},
+    #         {"_id": 0}
+    #     ).to_list(5000)
+        
+    #     for e in p_entries:
+    #         fid = e['feeder_id']
+    #         if fid not in group_entries_map: group_entries_map[fid] = []
+    #         group_entries_map[fid].append(e)
+
+    # 4. Calculate Stats for Periods
+    periods = [
+        {"name": "1st to 15th", "start": 1, "end": 15},
+        {"name": "16th to End", "start": 16, "end": 31},
+        {"name": "Full Month", "start": 1, "end": 31}
+    ]
+    
+    results = []
+    
+    for p in periods:
+        p_target = [
+            e for e in target_entries 
+            if p["start"] <= int(e['date'].split('-')[2]) <= p["end"]
+        ]
+        
+        # p_group_map = {}
+        # # Add current feeder to map
+        # p_group_map[feeder_id] = p_target
+
+        # for fid, entries in group_entries_map.items():
+        #     p_group_map[fid] = [
+        #         e for e in entries
+        #         if p["start"] <= int(e['date'].split('-')[2]) <= p["end"]
+        #     ]
+        
+        # # Determine Leader (Feeder with highest Max MW in this period)
+        # leader_id = determine_leader(p_group_map)
+        # if not leader_id: leader_id = feeder_id
+
+        # leader_entries = p_group_map[leader_id]
+            
+        # stats = calculate_coincident_stats(leader_entries, feeder_id, p_group_map, feeder['type'])
+        stats = calculate_standard_stats(p_target, feeder['type'])
+        stats['name'] = p['name']
+        results.append(stats)
+        
+    return results
+
 @api_router.get("/max-min/export/{feeder_id}/{year}/{month}")
 async def export_max_min_data(
     feeder_id: str,
@@ -2846,7 +3368,28 @@ async def generate_fortnight_report(
             for i, feeder in enumerate(main_feeders, 1):
                 f_entries = entries_by_feeder.get(feeder['id'], [])
                 p_entries = [e for e in f_entries if p['start'] <= e['date'] <= p['end']]
-                stats = calculate_period_stats(p_entries, feeder['type'])
+                
+                # Check for Grouping Logic
+                is_special, partner_names = get_feeder_group_info(feeder['name'])
+                if is_special:
+                    p_group_map = {}
+                    p_group_map[feeder['id']] = p_entries
+                    
+                    # Gather partner entries
+                    for pname in partner_names:
+                         p_feeder = next((x for x in feeders if x['name'] == pname), None)
+                         if p_feeder:
+                             pf_entries = entries_by_feeder.get(p_feeder['id'], [])
+                             pp_entries = [e for e in pf_entries if p['start'] <= e['date'] <= p['end']]
+                             p_group_map[p_feeder['id']] = pp_entries
+                    
+                    leader_id = determine_leader(p_group_map)
+                    if not leader_id: leader_id = feeder['id']
+                    
+                    leader_entries = p_group_map.get(leader_id, [])
+                    stats = calculate_coincident_stats(leader_entries, feeder['id'], p_group_map, feeder['type'])
+                else:
+                    stats = calculate_period_stats(p_entries, feeder['type'])
                 
                 ws.cell(row=row_idx, column=1, value=i).border = thin_border
                 ws.cell(row=row_idx, column=1).alignment = center_align
@@ -2889,7 +3432,28 @@ async def generate_fortnight_report(
             for i, feeder in enumerate(ict_feeders, start_sl):
                 f_entries = entries_by_feeder.get(feeder['id'], [])
                 p_entries = [e for e in f_entries if p['start'] <= e['date'] <= p['end']]
-                stats = calculate_period_stats(p_entries, feeder['type'])
+                
+                # Check for Grouping Logic (ICTs are in the group list)
+                is_special, partner_names = get_feeder_group_info(feeder['name'])
+                if is_special:
+                    p_group_map = {}
+                    p_group_map[feeder['id']] = p_entries
+                    
+                    # Gather partner entries
+                    for pname in partner_names:
+                         p_feeder = next((x for x in feeders if x['name'] == pname), None)
+                         if p_feeder:
+                             pf_entries = entries_by_feeder.get(p_feeder['id'], [])
+                             pp_entries = [e for e in pf_entries if p['start'] <= e['date'] <= p['end']]
+                             p_group_map[p_feeder['id']] = pp_entries
+                    
+                    leader_id = determine_leader(p_group_map)
+                    if not leader_id: leader_id = feeder['id']
+                    
+                    leader_entries = p_group_map.get(leader_id, [])
+                    stats = calculate_coincident_stats(leader_entries, feeder['id'], p_group_map, feeder['type'])
+                else:
+                    stats = calculate_period_stats(p_entries, feeder['type'])
                 
                 ws.cell(row=row_idx, column=1, value=i).border = thin_border
                 ws.cell(row=row_idx, column=1).alignment = center_align
@@ -3100,7 +3664,28 @@ async def preview_fortnight_report(
             for i, feeder in enumerate(main_feeders, 1):
                 f_entries = entries_by_feeder.get(feeder['id'], [])
                 p_entries = [e for e in f_entries if p['start'] <= e['date'] <= p['end']]
-                stats = calculate_period_stats(p_entries, feeder['type'])
+                
+                # Check for Grouping Logic
+                is_special, partner_names = get_feeder_group_info(feeder['name'])
+                if is_special:
+                    p_group_map = {}
+                    p_group_map[feeder['id']] = p_entries
+                    
+                    # Gather partner entries
+                    for pname in partner_names:
+                         p_feeder = next((x for x in feeders if x['name'] == pname), None)
+                         if p_feeder:
+                             pf_entries = entries_by_feeder.get(p_feeder['id'], [])
+                             pp_entries = [e for e in pf_entries if p['start'] <= e['date'] <= p['end']]
+                             p_group_map[p_feeder['id']] = pp_entries
+                    
+                    leader_id = determine_leader(p_group_map)
+                    if not leader_id: leader_id = feeder['id']
+                    
+                    leader_entries = p_group_map.get(leader_id, [])
+                    stats = calculate_coincident_stats(leader_entries, feeder['id'], p_group_map, feeder['type'])
+                else:
+                    stats = calculate_period_stats(p_entries, feeder['type'])
                 
                 period_data["main_feeders"].append({
                     "sl_no": i,
@@ -3121,7 +3706,28 @@ async def preview_fortnight_report(
             for i, feeder in enumerate(ict_feeders, start_sl):
                 f_entries = entries_by_feeder.get(feeder['id'], [])
                 p_entries = [e for e in f_entries if p['start'] <= e['date'] <= p['end']]
-                stats = calculate_period_stats(p_entries, feeder['type'])
+                
+                # Check for Grouping Logic
+                is_special, partner_names = get_feeder_group_info(feeder['name'])
+                if is_special:
+                    p_group_map = {}
+                    p_group_map[feeder['id']] = p_entries
+                    
+                    # Gather partner entries
+                    for pname in partner_names:
+                         p_feeder = next((x for x in feeders if x['name'] == pname), None)
+                         if p_feeder:
+                             pf_entries = entries_by_feeder.get(p_feeder['id'], [])
+                             pp_entries = [e for e in pf_entries if p['start'] <= e['date'] <= p['end']]
+                             p_group_map[p_feeder['id']] = pp_entries
+                    
+                    leader_id = determine_leader(p_group_map)
+                    if not leader_id: leader_id = feeder['id']
+                    
+                    leader_entries = p_group_map.get(leader_id, [])
+                    stats = calculate_coincident_stats(leader_entries, feeder['id'], p_group_map, feeder['type'])
+                else:
+                    stats = calculate_period_stats(p_entries, feeder['type'])
                 
                 period_data["ict_feeders"].append({
                     "sl_no": i,

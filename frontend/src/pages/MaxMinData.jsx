@@ -747,6 +747,19 @@ export default function MaxMinData() {
 
 // Summary Table Component
 function SummaryTable({ entries, selectedFeeder, year, month, getStationLoad }) {
+      const [backendSummary, setBackendSummary] = useState(null);
+
+      useEffect(() => {
+          setBackendSummary(null);
+          if (selectedFeeder && selectedFeeder.type !== 'bus_station') {
+              axios.get(`${API}/max-min/summary/${selectedFeeder.id}/${year}/${month}`)
+                  .then(res => {
+                      if (res.data) setBackendSummary(res.data);
+                  })
+                  .catch(() => setBackendSummary(null));
+          }
+      }, [selectedFeeder, year, month]);
+
       const p1Start = `${year}-${month.toString().padStart(2, '0')}-01`;
       const p1End = `${year}-${month.toString().padStart(2, '0')}-15`;
       const p2Start = `${year}-${month.toString().padStart(2, '0')}-16`;
@@ -992,8 +1005,22 @@ function SummaryTable({ entries, selectedFeeder, year, month, getStationLoad }) 
                                     }
                                 }
 
-                                const avgMW = countMW > 0 ? (totalMW / countMW).toFixed(2) : '-';
-                                const avgAmps = countAmps > 0 ? (totalAmps / countAmps).toFixed(2) : '-';
+                                let avgMW = countMW > 0 ? (totalMW / countMW).toFixed(2) : '-';
+                                let avgAmps = countAmps > 0 ? (totalAmps / countAmps).toFixed(2) : '-';
+
+                                if (backendSummary) {
+                                    const s = backendSummary.find(x => x.name === p.name);
+                                    if (s) {
+                                        maxMW = s.max_mw; maxMWDate = s.max_mw_date; maxMWTime = s.max_mw_time;
+                                        minMW = s.min_mw; minMWDate = s.min_mw_date; minMWTime = s.min_mw_time;
+                                        
+                                        maxAmps = s.max_amps; maxAmpsDate = s.max_amps_date; maxAmpsTime = s.max_amps_time;
+                                        minAmps = s.min_amps; minAmpsDate = s.min_amps_date; minAmpsTime = s.min_amps_time;
+                                        
+                                        avgMW = s.avg_mw;
+                                        avgAmps = s.avg_amps;
+                                    }
+                                }
 
                                 return (
                                     <Fragment key={p.name}>
