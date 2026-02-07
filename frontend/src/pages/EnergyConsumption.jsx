@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Download, Plus, Activity, Calendar, RefreshCcw, Upload, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Download, Plus, Activity, Calendar, RefreshCcw, Upload, ChevronLeft, ChevronRight, MoreHorizontal } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -12,6 +12,12 @@ import EnergyTable from '@/components/EnergyTable';
 import EnergyEntryModal from '@/components/EnergyEntryModal';
 import EnergyAnalytics from '@/components/EnergyAnalytics';
 import { FullPageLoader, BlockLoader } from '@/components/ui/loader';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -275,70 +281,114 @@ export default function EnergyConsumption() {
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-heading font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-            <Activity className="w-6 h-6 md:w-8 md:h-8 text-blue-600" />
-            Energy Consumption
-          </h1>
-          <p className="text-sm md:text-base text-slate-500 dark:text-slate-400 mt-1">
-            {monthNames[month - 1]} {year}
-          </p>
+        <div className="flex w-full justify-between items-start lg:w-auto lg:block">
+          <div>
+            <h1 className="text-2xl md:text-3xl font-heading font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              <Activity className="w-6 h-6 md:w-8 md:h-8 text-blue-600" />
+              Energy Consumption
+            </h1>
+            <p className="text-sm md:text-base text-slate-500 dark:text-slate-400 mt-1">
+              {monthNames[month - 1]} {year}
+            </p>
+          </div>
+          
+          <div className="md:hidden">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="icon">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={handleRefresh} disabled={!selectedSheet}>
+                    <RefreshCcw className="w-4 h-4 mr-2" />
+                    Refresh
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setShowDateSelector(true)}>
+                    <Calendar className="w-4 h-4 mr-2" />
+                    Period
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setIsModalOpen(true)} disabled={!selectedSheet}>
+                    <Plus className="w-4 h-4 mr-2" />
+                    Entry
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleImportClick} disabled={!selectedSheet}>
+                    <Upload className="w-4 h-4 mr-2" />
+                    Import
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleExport} disabled={!selectedSheet || entries.length === 0}>
+                    <Download className="w-4 h-4 mr-2" />
+                    Export
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleExportAll} disabled={sheets.length === 0}>
+                    <Download className="w-4 h-4 mr-2" />
+                    Export All
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+          </div>
         </div>
         
-        <div className="flex flex-wrap items-center gap-2 md:gap-3 w-full lg:w-auto">
-            <Button 
-                variant="outline" 
-                onClick={handleRefresh}
-                disabled={!selectedSheet}
-                className="flex-1 lg:flex-none"
-                data-testid="refresh-button"
-            >
-                <RefreshCcw className="w-4 h-4 mr-2" />
-                Refresh
-            </Button>
-            <Button 
-                variant="outline" 
-                onClick={() => setShowDateSelector(true)}
-                className="flex-1 lg:flex-none"
-            >
-                <Calendar className="w-4 h-4 mr-2" />
-                Period
-            </Button>
-            <Button 
-                onClick={() => setIsModalOpen(true)} 
-                disabled={!selectedSheet}
-                className="flex-1 lg:flex-none"
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Entry
-            </Button>
-            <Button 
-                variant="outline" 
-                onClick={handleImportClick}
-                disabled={!selectedSheet}
-                className="flex-1 lg:flex-none"
-            >
-              <Upload className="w-4 h-4 mr-2" />
-              Import
-            </Button>
-            <Button 
-                variant="secondary" 
-                onClick={handleExport} 
-                disabled={!selectedSheet || entries.length === 0}
-                className="flex-1 lg:flex-none"
-            >
-              <Download className="w-4 h-4 mr-2" />
-              Export
-            </Button>
-            <Button 
-                variant="secondary" 
-                onClick={handleExportAll} 
-                disabled={sheets.length === 0}
-                className="flex-1 lg:flex-none"
-            >
-              <Download className="w-4 h-4 mr-2" />
-              Export All
-            </Button>
+        <div className="flex items-center gap-2 md:gap-3 w-full lg:w-auto justify-end">
+            {/* Desktop Actions */}
+            <div className="hidden md:flex flex-wrap items-center gap-2 md:gap-3 w-full lg:w-auto">
+              <Button 
+                  variant="outline" 
+                  onClick={handleRefresh}
+                  disabled={!selectedSheet}
+                  className="flex-1 lg:flex-none"
+                  data-testid="refresh-button"
+              >
+                  <RefreshCcw className="w-4 h-4 mr-2" />
+                  Refresh
+              </Button>
+              <Button 
+                  variant="outline" 
+                  onClick={() => setShowDateSelector(true)}
+                  className="flex-1 lg:flex-none"
+              >
+                  <Calendar className="w-4 h-4 mr-2" />
+                  Period
+              </Button>
+              <Button 
+                  onClick={() => setIsModalOpen(true)} 
+                  disabled={!selectedSheet}
+                  className="flex-1 lg:flex-none"
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Entry
+              </Button>
+              <Button 
+                  variant="outline" 
+                  onClick={handleImportClick}
+                  disabled={!selectedSheet}
+                  className="flex-1 lg:flex-none"
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                Import
+              </Button>
+              <Button 
+                  variant="secondary" 
+                  onClick={handleExport} 
+                  disabled={!selectedSheet || entries.length === 0}
+                  className="flex-1 lg:flex-none"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                Export
+              </Button>
+              <Button 
+                  variant="secondary" 
+                  onClick={handleExportAll} 
+                  disabled={sheets.length === 0}
+                  className="flex-1 lg:flex-none"
+              >
+                <Download className="w-4 h-4 mr-2" />
+                Export All
+              </Button>
+            </div>
+
+
+
             <input 
               id="energy-import-input"
               type="file" 

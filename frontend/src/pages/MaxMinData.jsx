@@ -5,12 +5,18 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
- import { Calendar, Download, Plus, Edit, Trash2, RefreshCcw, Upload, ChevronLeft, ChevronRight } from 'lucide-react';
+ import { Calendar, Download, Plus, Edit, Trash2, RefreshCcw, Upload, ChevronLeft, ChevronRight, MoreHorizontal } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
 import MaxMinEntryModal from '@/components/MaxMinEntryModal';
 import MaxMinAnalytics from '@/components/MaxMinAnalytics';
 import MaxMinImportPreviewModal from '@/components/MaxMinImportPreviewModal';
 import { FullPageLoader, BlockLoader } from '@/components/ui/loader';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -450,53 +456,118 @@ export default function MaxMinData() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 bg-white dark:bg-slate-950 p-6 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800">
-        <div>
-          <h1 className="text-3xl md:text-4xl font-heading font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600">
-            Max Min Data
-          </h1>
-          <p className="text-sm md:text-base text-slate-500 font-medium mt-2 flex items-center gap-2">
-            <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 ring-4 ring-emerald-50"></span>
-            {monthNames[month - 1]} {year}
-          </p>
+        <div className="flex w-full justify-between items-start lg:w-auto lg:block">
+          <div>
+            <h1 className="text-3xl md:text-4xl font-heading font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600">
+              Max Min Data
+            </h1>
+            <p className="text-sm md:text-base text-slate-500 font-medium mt-2 flex items-center gap-2">
+              <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 ring-4 ring-emerald-50"></span>
+              {monthNames[month - 1]} {year}
+            </p>
+          </div>
+          
+          <div className="md:hidden">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={handleRefresh} disabled={!selectedFeeder}>
+                  <RefreshCcw className="w-4 h-4 mr-2" />
+                  Refresh
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setShowDateSelector(true)}>
+                  <Calendar className="w-4 h-4 mr-2" />
+                  Period
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => {
+                    setEditingEntry(null);
+                    setIsModalOpen(true);
+                }}>
+                  <Plus className="w-4 h-4 mr-2" />
+                  New Entry
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleImportClick}>
+                  <Upload className="w-4 h-4 mr-2" />
+                  Import
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleExport} disabled={!selectedFeeder || entries.length === 0}>
+                  <Download className="w-4 h-4 mr-2" />
+                  Export
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleExportAll} disabled={!feeders.length}>
+                  <Download className="w-4 h-4 mr-2" />
+                  Export All
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
         
-        <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
-          <Button 
-            variant="outline" 
-            onClick={handleRefresh}
-            disabled={!selectedFeeder}
-            className="flex-1 lg:flex-none border-slate-200 hover:bg-slate-50 text-slate-700 font-medium"
-            data-testid="refresh-button"
-          >
-            <RefreshCcw className="w-4 h-4 mr-2 text-indigo-500" />
-            Refresh
-          </Button>
-          <Button 
-            variant="outline" 
-            onClick={() => setShowDateSelector(true)}
-            className="flex-1 lg:flex-none border-slate-200 hover:bg-slate-50 text-slate-700 font-medium"
-          >
-            <Calendar className="w-4 h-4 mr-2 text-indigo-500" />
-            Period
-          </Button>
-          <Button 
-            onClick={() => {
-                setEditingEntry(null);
-                setIsModalOpen(true);
-            }}
-            className="flex-1 lg:flex-none bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white shadow-lg shadow-indigo-200 border-0 font-medium transition-all hover:scale-105"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            New Entry
-          </Button>
-          <Button 
-            onClick={handleImportClick}
-            variant="outline"
-            className="flex-1 lg:flex-none border-slate-200 hover:bg-slate-50 text-slate-700 font-medium"
-          >
-            <Upload className="w-4 h-4 mr-2 text-indigo-500" />
-            Import
-          </Button>
+        <div className="flex items-center gap-3 w-full lg:w-auto justify-end">
+          {/* Desktop Actions */}
+          <div className="hidden md:flex flex-wrap items-center gap-3 w-full lg:w-auto">
+            <Button 
+              variant="outline" 
+              onClick={handleRefresh}
+              disabled={!selectedFeeder}
+              className="flex-1 lg:flex-none border-slate-200 hover:bg-slate-50 text-slate-700 font-medium"
+              data-testid="refresh-button"
+            >
+              <RefreshCcw className="w-4 h-4 mr-2 text-indigo-500" />
+              Refresh
+            </Button>
+            <Button 
+              variant="outline" 
+              onClick={() => setShowDateSelector(true)}
+              className="flex-1 lg:flex-none border-slate-200 hover:bg-slate-50 text-slate-700 font-medium"
+            >
+              <Calendar className="w-4 h-4 mr-2 text-indigo-500" />
+              Period
+            </Button>
+            <Button 
+              onClick={() => {
+                  setEditingEntry(null);
+                  setIsModalOpen(true);
+              }}
+              className="flex-1 lg:flex-none bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white shadow-lg shadow-indigo-200 border-0 font-medium transition-all hover:scale-105"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              New Entry
+            </Button>
+            <Button 
+              onClick={handleImportClick}
+              variant="outline"
+              className="flex-1 lg:flex-none border-slate-200 hover:bg-slate-50 text-slate-700 font-medium"
+            >
+              <Upload className="w-4 h-4 mr-2 text-indigo-500" />
+              Import
+            </Button>
+            <Button 
+              variant="secondary" 
+              onClick={handleExport}
+              disabled={!selectedFeeder || entries.length === 0}
+              className="flex-1 lg:flex-none bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 font-medium"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Export
+            </Button>
+            <Button 
+              variant="secondary" 
+              onClick={handleExportAll}
+              disabled={!feeders.length}
+              className="flex-1 lg:flex-none bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 font-medium"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Export All
+            </Button>
+          </div>
+
+
+
           <input
             type="file"
             ref={fileInputRef}
@@ -504,24 +575,6 @@ export default function MaxMinData() {
             className="hidden"
             accept=".xlsx,.xls"
           />
-          <Button 
-            variant="secondary" 
-            onClick={handleExport}
-            disabled={!selectedFeeder || entries.length === 0}
-            className="flex-1 lg:flex-none bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 font-medium"
-          >
-            <Download className="w-4 h-4 mr-2" />
-            Export
-          </Button>
-          <Button 
-            variant="secondary" 
-            onClick={handleExportAll}
-            disabled={!feeders.length}
-            className="flex-1 lg:flex-none bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 font-medium"
-          >
-            <Download className="w-4 h-4 mr-2" />
-            Export All
-          </Button>
         </div>
       </div>
 

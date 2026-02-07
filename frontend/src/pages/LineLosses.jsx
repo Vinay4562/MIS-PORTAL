@@ -8,8 +8,14 @@ import DataEntryModal from '@/components/DataEntryModal';
 import ImportPreviewModal from '@/components/ImportPreviewModal';
 import FeederTable from '@/components/FeederTable';
 import AnalyticsCharts from '@/components/AnalyticsCharts';
-import { Download, Plus, Calendar, RefreshCcw, Upload, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Download, Plus, Calendar, RefreshCcw, Upload, ChevronLeft, ChevronRight, MoreHorizontal } from 'lucide-react';
 import { FullPageLoader } from '@/components/ui/loader';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -310,51 +316,114 @@ export default function LineLosses() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-heading font-bold text-slate-900 dark:text-slate-100">
-            Line Losses Management
-          </h1>
-          <p className="text-sm md:text-base text-slate-600 dark:text-slate-400 mt-1">
-            {monthNames[month - 1]} {year}
-          </p>
+        <div className="flex w-full justify-between items-start lg:w-auto lg:block">
+          <div>
+            <h1 className="text-2xl md:text-3xl font-heading font-bold text-slate-900 dark:text-slate-100">
+              Line Losses Management
+            </h1>
+            <p className="text-sm md:text-base text-slate-600 dark:text-slate-400 mt-1">
+              {monthNames[month - 1]} {year}
+            </p>
+          </div>
+
+          <div className="md:hidden">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={handleRefresh} disabled={!selectedFeeder}>
+                  <RefreshCcw className="w-4 h-4 mr-2" />
+                  Refresh
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setShowDateSelector(true)}>
+                  <Calendar className="w-4 h-4 mr-2" />
+                  Period
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setIsModalOpen(true)}>
+                  <Plus className="w-4 h-4 mr-2" />
+                  Entry
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleImportClick}>
+                  <Upload className="w-4 h-4 mr-2" />
+                  Import
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleExport} disabled={!selectedFeeder || entries.length === 0}>
+                  <Download className="w-4 h-4 mr-2" />
+                  Export
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleExportAll} disabled={feeders.length === 0}>
+                  <Download className="w-4 h-4 mr-2" />
+                  Export All
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
         
-        <div className="flex flex-wrap items-center gap-2 md:gap-3 w-full lg:w-auto">
-          <Button 
-            variant="outline" 
-            onClick={handleRefresh}
-            disabled={!selectedFeeder}
-            data-testid="refresh-button"
-            className="flex-1 lg:flex-none"
-          >
-            <RefreshCcw className="w-4 h-4 mr-2" />
-            Refresh
-          </Button>
-          <Button 
-            variant="outline" 
-            onClick={() => setShowDateSelector(true)}
-            data-testid="change-period-button"
-            className="flex-1 lg:flex-none"
-          >
-            <Calendar className="w-4 h-4 mr-2" />
-            Period
-          </Button>
-          <Button 
-            onClick={() => setIsModalOpen(true)}
-            data-testid="new-entry-button"
-            className="flex-1 lg:flex-none"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Entry
-          </Button>
-          <Button 
-            onClick={handleImportClick}
-            variant="outline"
-            className="flex-1 lg:flex-none"
-          >
-            <Upload className="w-4 h-4 mr-2" />
-            Import
-          </Button>
+        <div className="flex items-center gap-2 md:gap-3 w-full lg:w-auto justify-end">
+          {/* Desktop Actions */}
+          <div className="hidden md:flex flex-wrap items-center gap-2 md:gap-3 w-full lg:w-auto">
+            <Button 
+              variant="outline" 
+              onClick={handleRefresh}
+              disabled={!selectedFeeder}
+              data-testid="refresh-button"
+              className="flex-1 lg:flex-none"
+            >
+              <RefreshCcw className="w-4 h-4 mr-2" />
+              Refresh
+            </Button>
+            <Button 
+              variant="outline" 
+              onClick={() => setShowDateSelector(true)}
+              data-testid="change-period-button"
+              className="flex-1 lg:flex-none"
+            >
+              <Calendar className="w-4 h-4 mr-2" />
+              Period
+            </Button>
+            <Button 
+              onClick={() => setIsModalOpen(true)}
+              data-testid="new-entry-button"
+              className="flex-1 lg:flex-none"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Entry
+            </Button>
+            <Button 
+              onClick={handleImportClick}
+              variant="outline"
+              className="flex-1 lg:flex-none"
+            >
+              <Upload className="w-4 h-4 mr-2" />
+              Import
+            </Button>
+            <Button 
+              variant="secondary" 
+              onClick={handleExport}
+              disabled={!selectedFeeder || entries.length === 0}
+              data-testid="export-button"
+              className="flex-1 lg:flex-none"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Export
+            </Button>
+            <Button 
+              variant="secondary" 
+              onClick={handleExportAll}
+              disabled={feeders.length === 0}
+              className="flex-1 lg:flex-none"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Export All
+            </Button>
+          </div>
+
+
+
           <input 
             type="file" 
             ref={fileInputRef} 
@@ -362,25 +431,6 @@ export default function LineLosses() {
             className="hidden" 
             accept=".xlsx,.xls"
           />
-          <Button 
-            variant="secondary" 
-            onClick={handleExport}
-            disabled={!selectedFeeder || entries.length === 0}
-            data-testid="export-button"
-            className="flex-1 lg:flex-none"
-          >
-            <Download className="w-4 h-4 mr-2" />
-            Export
-          </Button>
-          <Button 
-            variant="secondary" 
-            onClick={handleExportAll}
-            disabled={feeders.length === 0}
-            className="flex-1 lg:flex-none"
-          >
-            <Download className="w-4 h-4 mr-2" />
-            Export All
-          </Button>
         </div>
       </div>
 
