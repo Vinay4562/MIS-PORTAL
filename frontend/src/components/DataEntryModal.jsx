@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { Edit2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Loader } from "@/components/ui/loader";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -336,7 +337,12 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, d
               Cancel
             </Button>
             <Button type="submit" disabled={loading} data-testid="save-entry-button">
-              {loading ? 'Saving...' : (editingId ? 'Update Entry' : 'Save Entry')}
+              {loading ? (
+                <>
+                  <Loader size="sm" className="mr-2 text-white" />
+                  Saving...
+                </>
+              ) : (editingId ? 'Update Entry' : 'Save Entry')}
             </Button>
           </div>
         </form>

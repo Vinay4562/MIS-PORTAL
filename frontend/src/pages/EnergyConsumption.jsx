@@ -11,6 +11,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import EnergyTable from '@/components/EnergyTable';
 import EnergyEntryModal from '@/components/EnergyEntryModal';
 import EnergyAnalytics from '@/components/EnergyAnalytics';
+import { FullPageLoader, BlockLoader } from '@/components/ui/loader';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -216,7 +217,7 @@ export default function EnergyConsumption() {
   ];
 
   if (!initialized) {
-    return <div className="p-8 text-center">Loading Energy Module...</div>;
+    return <FullPageLoader text="Loading Energy Module..." />;
   }
 
   if (showDateSelector) {

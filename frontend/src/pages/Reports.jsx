@@ -3,9 +3,10 @@ import axios from 'axios';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { FileText, Eye, Download, Calendar, Loader2 } from 'lucide-react';
+import { FileText, Eye, Download, Calendar } from 'lucide-react';
 import { toast } from 'sonner';
 import { ReportPreviewModal } from '@/components/ReportPreviewModal';
+import { Loader } from '@/components/ui/loader';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -233,7 +234,7 @@ export default function Reports() {
                 className="gap-2"
                 disabled={loading === 'all'}
             >
-                {loading === 'all' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                {loading === 'all' ? <Loader size="sm" /> : <Download className="w-4 h-4" />}
                 Download All
             </Button>
             <Button 
@@ -275,7 +276,7 @@ export default function Reports() {
                   onClick={() => handleExport(report)}
                   disabled={loading === report.id}
                 >
-                  {loading === report.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                  {loading === report.id ? <Loader size="sm" className="animate-spin text-white" /> : <Download className="w-4 h-4" />}
                   Export
                 </Button>
               </div>

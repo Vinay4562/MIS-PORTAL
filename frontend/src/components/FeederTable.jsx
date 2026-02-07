@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { toast } from 'sonner';
 import { Edit2, Trash2, Save, X } from 'lucide-react';
 import { formatDate } from '@/lib/utils';
+import { InlineLoader, Loader } from '@/components/ui/loader';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -13,6 +14,8 @@ export default function FeederTable({ feeder, entries, loading, onUpdate, onDele
   const [editingId, setEditingId] = useState(null);
   const [editValues, setEditValues] = useState({});
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  const [savingId, setSavingId] = useState(null);
+  const [deletingId, setDeletingId] = useState(null);
 
   const startEdit = (entry) => {
     setEditingId(entry.id);
@@ -35,19 +38,29 @@ export default function FeederTable({ feeder, entries, loading, onUpdate, onDele
 
   const saveEdit = async (entryId) => {
     try {
+      setSavingId(entryId);
       const response = await axios.put(`${API}/entries/${entryId}`, editValues);
       onUpdate(response.data);
       setEditingId(null);
       setEditValues({});
     } catch (error) {
       toast.error('Failed to update entry');
+    } finally {
+      setSavingId(null);
     }
   };
 
   const confirmDelete = async () => {
     if (deleteConfirmId) {
-      await onDelete(deleteConfirmId);
-      setDeleteConfirmId(null);
+      try {
+        setDeletingId(deleteConfirmId);
+        await onDelete(deleteConfirmId);
+        setDeleteConfirmId(null);
+      } catch (error) {
+        toast.error('Failed to delete entry');
+      } finally {
+        setDeletingId(null);
+      }
     }
   };
 
@@ -64,7 +77,7 @@ export default function FeederTable({ feeder, entries, loading, onUpdate, onDele
   if (loading) {
     return (
       <div className="flex items-center justify-center p-12">
-        <p className="text-lg">Loading entries...</p>
+        <InlineLoader text="Loading entries..." />
       </div>
     );
   }
@@ -271,11 +284,16 @@ export default function FeederTable({ feeder, entries, loading, onUpdate, onDele
             Are you sure you want to delete this entry? This action cannot be undone.
           </p>
           <div className="flex gap-2 justify-end mt-4">
-            <Button variant="outline" onClick={() => setDeleteConfirmId(null)}>
+            <Button variant="outline" onClick={() => setDeleteConfirmId(null)} disabled={deletingId}>
               Cancel
             </Button>
-            <Button variant="destructive" onClick={confirmDelete}>
-              Delete
+            <Button variant="destructive" onClick={confirmDelete} disabled={deletingId}>
+              {deletingId ? (
+                <>
+                  <Loader size="sm" className="mr-2 text-white" />
+                  Deleting...
+                </>
+              ) : 'Delete'}
             </Button>
           </div>
         </DialogContent>

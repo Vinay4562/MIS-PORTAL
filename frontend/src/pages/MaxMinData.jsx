@@ -9,7 +9,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { formatDate } from '@/lib/utils';
 import MaxMinEntryModal from '@/components/MaxMinEntryModal';
 import MaxMinAnalytics from '@/components/MaxMinAnalytics';
- import MaxMinImportPreviewModal from '@/components/MaxMinImportPreviewModal';
+import MaxMinImportPreviewModal from '@/components/MaxMinImportPreviewModal';
+import { FullPageLoader, BlockLoader } from '@/components/ui/loader';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -394,11 +395,7 @@ export default function MaxMinData() {
   };
 
   if (!initialized) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <p className="text-lg">Loading...</p>
-      </div>
-    );
+    return <FullPageLoader text="Loading Feeders..." />;
   }
 
   if (showDateSelector) {
@@ -578,7 +575,8 @@ export default function MaxMinData() {
 
       {/* Data Table */}
       {selectedFeeder && (
-        <Card className="shadow-lg border-0 ring-1 ring-slate-100 overflow-hidden bg-white">
+        <Card className="shadow-lg border-0 ring-1 ring-slate-100 overflow-hidden bg-white relative">
+            {loading && <BlockLoader text="Loading entries..." className="z-20" />}
             <CardHeader className="bg-slate-50/50 border-b border-slate-100 py-5">
                 <div className="flex items-center justify-between">
                     <CardTitle className="text-lg font-bold text-slate-700 flex items-center gap-2">

@@ -14,17 +14,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2 } from "lucide-react";
+import { BlockLoader } from "@/components/ui/loader";
 
 export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year, month }) {
   
   const renderContent = () => {
     if (loading) {
-      return (
-        <div className="flex justify-center items-center py-10">
-          <Loader2 className="w-8 h-8 animate-spin" />
-        </div>
-      );
+      return <BlockLoader text="Loading preview..." />;
     }
 
     if (!data) return <div className="text-center py-4">No data available</div>;

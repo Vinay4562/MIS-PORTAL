@@ -9,6 +9,7 @@ import ImportPreviewModal from '@/components/ImportPreviewModal';
 import FeederTable from '@/components/FeederTable';
 import AnalyticsCharts from '@/components/AnalyticsCharts';
 import { Download, Plus, Calendar, RefreshCcw, Upload, ChevronLeft, ChevronRight } from 'lucide-react';
+import { FullPageLoader } from '@/components/ui/loader';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -249,11 +250,7 @@ export default function LineLosses() {
   ];
 
   if (!initialized) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <p className="text-lg">Loading...</p>
-      </div>
-    );
+    return <FullPageLoader text="Loading Feeders..." />;
   }
 
   if (showDateSelector) {

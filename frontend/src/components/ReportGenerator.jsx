@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Download, FileText } from 'lucide-react';
 import { toast } from 'sonner';
+import { BlockLoader, Loader } from '@/components/ui/loader';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -40,6 +41,7 @@ export default function ReportGenerator() {
   const [feeders, setFeeders] = useState([]);
   const [selectedFeeders, setSelectedFeeders] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [fetching, setFetching] = useState(true);
 
   useEffect(() => {
     fetchFeeders();
@@ -60,6 +62,8 @@ export default function ReportGenerator() {
     } catch (error) {
       console.error('Failed to fetch feeders:', error);
       toast.error('Failed to load feeders');
+    } finally {
+      setFetching(false);
     }
   };
 
@@ -115,23 +119,27 @@ export default function ReportGenerator() {
           </div>
           
           <ScrollArea className="h-[300px] rounded-md border p-4 bg-slate-50 dark:bg-slate-900">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {feeders.map((feeder) => (
-                <div key={feeder.id} className="flex items-center space-x-2 p-2 rounded hover:bg-white dark:hover:bg-slate-800 transition-colors">
-                  <Checkbox 
-                    id={`feeder-${feeder.id}`} 
-                    checked={selectedFeeders.includes(feeder.id)}
-                    onCheckedChange={(checked) => handleSelectFeeder(feeder.id, checked)}
-                  />
-                  <Label 
-                    htmlFor={`feeder-${feeder.id}`}
-                    className="cursor-pointer flex-1 text-sm text-slate-600 dark:text-slate-400"
-                  >
-                    {feeder.name}
-                  </Label>
-                </div>
-              ))}
-            </div>
+            {fetching ? (
+              <BlockLoader text="Loading feeders..." />
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {feeders.map((feeder) => (
+                  <div key={feeder.id} className="flex items-center space-x-2 p-2 rounded hover:bg-white dark:hover:bg-slate-800 transition-colors">
+                    <Checkbox 
+                      id={`feeder-${feeder.id}`} 
+                      checked={selectedFeeders.includes(feeder.id)}
+                      onCheckedChange={(checked) => handleSelectFeeder(feeder.id, checked)}
+                    />
+                    <Label 
+                      htmlFor={`feeder-${feeder.id}`}
+                      className="cursor-pointer flex-1 text-sm text-slate-600 dark:text-slate-400"
+                    >
+                      {feeder.name}
+                    </Label>
+                  </div>
+                ))}
+              </div>
+            )}
           </ScrollArea>
           
           <div className="flex justify-between items-center pt-2">
@@ -146,8 +154,17 @@ export default function ReportGenerator() {
           onClick={handleGenerateReport}
           disabled={selectedFeeders.length === 0 || loading}
         >
-          <Download className="w-4 h-4 mr-2" />
-          Generate Report
+          {loading ? (
+            <>
+              <Loader size="sm" className="mr-2 text-white" />
+              Generating Report...
+            </>
+          ) : (
+            <>
+              <Download className="w-4 h-4 mr-2" />
+              Generate Report
+            </>
+          )}
         </Button>
       </CardContent>
     </Card>

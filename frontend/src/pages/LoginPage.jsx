@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { toast } from 'sonner';
 import { Zap, Eye, EyeOff } from 'lucide-react';
+import { Loader } from '@/components/ui/loader';
 
 export default function LoginPage() {
   const [isLogin, setIsLogin] = useState(true);
@@ -181,7 +182,12 @@ export default function LoginPage() {
               disabled={loading}
               data-testid="submit-button"
             >
-              {loading ? 'Please wait...' : (isLogin ? 'Sign In' : (isSignupVerification ? 'Verify & Create Account' : 'Sign Up'))}
+              {loading ? (
+                <>
+                  <Loader size="sm" className="mr-2 text-white" />
+                  Please wait...
+                </>
+              ) : (isLogin ? 'Sign In' : (isSignupVerification ? 'Verify & Create Account' : 'Sign Up'))}
             </Button>
             
             <div className="text-center pt-2">

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Loader } from "@/components/ui/loader";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
  
@@ -155,7 +156,12 @@ export default function MaxMinImportPreviewModal({ isOpen, onClose, data, feeder
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={loading}>Cancel</Button>
           <Button onClick={onConfirm} disabled={loading || data.length === 0}>
-            {loading ? "Importing..." : "Import"}
+            {loading ? (
+              <>
+                <Loader size="sm" className="mr-2 text-white" />
+                Importing...
+              </>
+            ) : "Import"}
           </Button>
         </DialogFooter>
       </DialogContent>

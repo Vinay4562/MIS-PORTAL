@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from 'sonner';
 import { Edit, Calendar, Ban, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Loader } from "@/components/ui/loader";
 
 export default function MaxMinEntryModal({ isOpen, onClose, onSave, feeder, year, month, initialData, defaultDate, onPrevFeeder, onNextFeeder, entries }) {
   const [formData, setFormData] = useState({});
@@ -397,7 +398,12 @@ export default function MaxMinEntryModal({ isOpen, onClose, onSave, feeder, year
               Cancel
             </Button>
             <Button type="submit" disabled={loading} className="bg-indigo-600 hover:bg-indigo-700 text-white">
-              {loading ? 'Saving...' : 'Save Entry'}
+              {loading ? (
+                <>
+                  <Loader size="sm" className="mr-2 text-white" />
+                  Saving...
+                </>
+              ) : 'Save Entry'}
             </Button>
           </DialogFooter>
         </form>

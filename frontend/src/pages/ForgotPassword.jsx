@@ -133,7 +133,12 @@ export default function ForgotPassword() {
                 </div>
               </div>
               <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700" disabled={loading}>
-                {loading ? 'Resetting Password...' : 'Reset Password'}
+                {loading ? (
+                  <>
+                    <Loader size="sm" className="mr-2 text-white" />
+                    Resetting Password...
+                  </>
+                ) : 'Reset Password'}
               </Button>
               <Button 
                 type="button" 

@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { Loader } from "@/components/ui/loader";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -267,7 +268,14 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, year, month, 
 
             <div className="pt-4 flex justify-end gap-2 border-t">
                 <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-                <Button type="submit" disabled={loading}>Save Entry</Button>
+                <Button type="submit" disabled={loading}>
+                    {loading ? (
+                        <>
+                            <Loader size="sm" className="mr-2 text-white" />
+                            Saving...
+                        </>
+                    ) : 'Save Entry'}
+                </Button>
             </div>
         </form>
       </DialogContent>

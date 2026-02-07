@@ -2,10 +2,13 @@ import { Fragment } from 'react';
 import { Edit2, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { formatDate } from '@/lib/utils';
+import { InlineLoader } from '@/components/ui/loader';
 
 export default function EnergyTable({ sheet, entries, loading, onEdit, onDelete }) {
   if (loading) {
-    return <div className="p-8 text-center">Loading entries...</div>;
+    return <div className="h-64 flex items-center justify-center border rounded-md border-slate-200 dark:border-slate-700">
+      <InlineLoader text="Loading entries..." />
+    </div>;
   }
 
   if (entries.length === 0) {
