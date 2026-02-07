@@ -4559,17 +4559,20 @@ def calculate_kpi_stats(entries, feeder_type):
     max_val = 0
     count = 0
     
+    # For Lines: track Max MW to determine which Amps to pick
+    max_mw_found = -1.0
+    
     for e in entries:
         d = e.get('data', {})
         if not d: continue
+        
+        max_data = d.get('max') or {}
+        avg_data = d.get('avg') or {}
         
         if feeder_type == 'ict_feeder':
             # ICT: Max Demand (MW) and Avg Load (MW)
             # Max MW comes from max.mw
             # Avg MW comes from avg.mw
-            max_data = d.get('max') or {}
-            avg_data = d.get('avg') or {}
-            
             curr_max = float(max_data.get('mw', 0) or 0)
             curr_avg = float(avg_data.get('mw', 0) or 0)
             
@@ -4581,17 +4584,15 @@ def calculate_kpi_stats(entries, feeder_type):
                 count += 1
         else:
             # Line: Max Line Loading (Amps) and Avg Loading (Amps)
-            # Max Amps from max.amps
-            # Avg Amps from avg.amps
-            max_data = d.get('max') or {}
-            avg_data = d.get('avg') or {}
+            # Logic Update: Max Amps should be derived from the entry with Max MW
+            curr_mw = float(max_data.get('mw', 0) or 0)
+            curr_amps = float(max_data.get('amps', 0) or 0)
             
-            curr_max = float(max_data.get('amps', 0) or 0)
+            if curr_mw > max_mw_found:
+                max_mw_found = curr_mw
+                max_val = curr_amps
+            
             curr_avg = float(avg_data.get('amps', 0) or 0)
-            
-            if curr_max > max_val:
-                max_val = curr_max
-                
             if curr_avg > 0:
                 total_avg += curr_avg
                 count += 1
@@ -5702,14 +5703,30 @@ async def get_tl_max_loading_preview(
         "220KV SADASIVAPET-2": "Shankarpally - Sadasivapet-2"
     }
 
-    # Fetch feeders
-    db_feeders = await db.max_min_feeders.find({"name": {"$in": TL_ORDER}}, {"_id": 0}).to_list(100)
-    feeder_map = {f['name']: f for f in db_feeders}
+    # Fetch all feeders (needed for group logic)
+    all_db_feeders = await db.max_min_feeders.find({}, {"_id": 0}).to_list(1000)
+    all_feeder_map = {f['name']: f for f in all_db_feeders}
+    all_feeder_id_map = {f['id']: f for f in all_db_feeders}
+
+    # Fetch all entries for the month
+    all_entries = await db.max_min_entries.find(
+        {"date": {"$gte": start_date, "$lt": end_date}},
+        {"_id": 0}
+    ).to_list(10000)
+
+    # Group entries by feeder_id
+    entries_by_feeder = {}
+    for e in all_entries:
+        fid = e.get('feeder_id')
+        if fid:
+            if fid not in entries_by_feeder:
+                entries_by_feeder[fid] = []
+            entries_by_feeder[fid].append(e)
     
     data = []
     
     for idx, feeder_name in enumerate(TL_ORDER):
-        feeder = feeder_map.get(feeder_name)
+        feeder = all_feeder_map.get(feeder_name)
         
         mw_val = ""
         mvar_val = ""
@@ -5717,33 +5734,52 @@ async def get_tl_max_loading_preview(
         time_val = ""
         
         if feeder:
-            entries = await db.max_min_entries.find(
-                {"feeder_id": feeder['id'], "date": {"$gte": start_date, "$lt": end_date}},
-                {"_id": 0}
-            ).to_list(1000)
+            feeder_entries = entries_by_feeder.get(feeder['id'], [])
             
-            max_mw = -1.0
-            max_entry = None
+            # Check for Grouping Logic (Pair Feeder Logic)
+            is_special, partner_names = get_feeder_group_info(feeder['name'])
             
-            # Find Full Month Max MW
-            for e in entries:
-                d = e.get('data', {})
+            if is_special:
+                p_group_map = {}
+                p_group_map[feeder['id']] = feeder_entries
+                
+                # Gather partner entries
+                for pname in partner_names:
+                    p_feeder = all_feeder_map.get(pname)
+                    if p_feeder:
+                         p_group_map[p_feeder['id']] = entries_by_feeder.get(p_feeder['id'], [])
+                
+                # Determine Leader for the Full Month
+                leader_id = determine_leader(p_group_map)
+                if not leader_id: leader_id = feeder['id']
+                
+                leader_entries = p_group_map.get(leader_id, [])
+                
+                # Calculate Stats
+                # Note: 'type' might be missing in feeder obj if not fetched properly, default to 'feeder'
+                ftype = feeder.get('type', 'feeder') 
+                stats = calculate_coincident_stats(leader_entries, feeder['id'], p_group_map, ftype)
+                
+                # Extract values
                 try:
-                    # Prioritize Max MW from Max Details
-                    curr_mw = float(d.get('max', {}).get('mw', 0) or 0)
+                    max_mw = stats.get('max_mw', '-')
+                    if max_mw != '-' and max_mw is not None:
+                        mw_val = f"{float(max_mw):.2f}"
+                        date_val = format_date(stats.get('max_mw_date', ''))
+                        time_val = format_time(stats.get('max_mw_time', ''))
                 except:
-                    curr_mw = 0.0
-                    
-                if curr_mw > max_mw:
-                    max_mw = curr_mw
-                    max_entry = e
-            
-            if max_entry and max_mw > 0:
+                    pass
+            else:
+                # Standard Logic (Individual Max)
+                ftype = feeder.get('type', 'feeder')
+                stats = calculate_standard_stats(feeder_entries, ftype)
+                
                 try:
-                    md = max_entry.get('data', {}).get('max', {}) or {}
-                    time_val = format_time(md.get('time', ''))
-                    date_val = format_date(max_entry.get('date', ''))
-                    mw_val = f"{max_mw:.2f}"
+                    max_mw = stats.get('max_mw', '-')
+                    if max_mw != '-' and max_mw is not None:
+                        mw_val = f"{float(max_mw):.2f}"
+                        date_val = format_date(stats.get('max_mw_date', ''))
+                        time_val = format_time(stats.get('max_mw_time', ''))
                 except:
                     pass
 
