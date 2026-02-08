@@ -3029,7 +3029,7 @@ async def get_energy_sheets(current_user: User = Depends(get_current_user)):
     sheets = await db.energy_sheets.find({}, {"_id": 0}).to_list(100)
     result = []
     for sheet in sheets:
-        meters = await db.energy_meters.find({"sheet_id": sheet['id']}, {"_id": 0}).to_list(100)
+        meters = await db.energy_meters.find({"sheet_id": sheet['id']}, {"_id": 0}).sort("order", 1).to_list(100)
         sheet['meters'] = meters
         result.append(sheet)
     return result
