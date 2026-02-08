@@ -376,17 +376,16 @@ origins = [
     "https://mis-portal.vercel.app"
 ]
 
-env_origins = os.environ.get('CORS_ORIGINS', '')
-if env_origins:
-    origins.extend(env_origins.split(','))
-
+# Ensure we allow Vercel and Railway subdomains dynamically
+# and allow credentials to be sent (cookies, auth headers)
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=origins,
-    allow_origin_regex=r"https://.*\.railway\.app|https://.*\.vercel\.app",
+    allow_origins=origins, # Specific origins
+    allow_origin_regex=r"https://.*\.vercel\.app|https://.*\.railway\.app", # Regex for dynamic subdomains
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
 
 api_router = APIRouter(prefix="/api")
