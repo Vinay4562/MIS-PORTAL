@@ -7,9 +7,12 @@ import webview
 import threading
 import time
 import logging
+import base64
+import requests
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.concurrency import run_in_threadpool
 
 # Setup file logging for debugging frozen app
 log_file = os.path.join(os.path.expanduser("~"), "mis_portal_debug.log")
@@ -41,6 +44,47 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 app = FastAPI()
+
+# Proxy configuration
+TARGET_URL = "https://mis-portal-production.up.railway.app"
+
+@app.api_route("/api/{path_name:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"])
+async def proxy_api(path_name: str, request: Request):
+    """
+    Proxy /api requests to the production backend to avoid CORS issues in the frozen app.
+    """
+    url = f"{TARGET_URL}/api/{path_name}"
+    
+    # Read body
+    body = await request.body()
+    
+    # Filter headers (host and content-length are handled by the library/network)
+    headers = {key: value for key, value in request.headers.items() 
+               if key.lower() not in ['host', 'content-length']}
+    
+    def make_request():
+        return requests.request(
+            method=request.method,
+            url=url,
+            headers=headers,
+            data=body,
+            params=request.query_params,
+            stream=True
+        )
+    
+    try:
+        # Run synchronous request in threadpool to avoid blocking event loop
+        r = await run_in_threadpool(make_request)
+        
+        return StreamingResponse(
+            r.iter_content(chunk_size=4096),
+            status_code=r.status_code,
+            headers=dict(r.headers),
+            media_type=r.headers.get("content-type")
+        )
+    except Exception as e:
+        logger.error(f"Proxy error: {e}")
+        return {"error": str(e)}
 
 # 1. Determine Build Directory
 build_dir = resource_path('frontend_build')
@@ -99,6 +143,38 @@ async def serve_react_app(full_path: str):
     logger.error(f"404 Not Found: {full_path}")
     return HTMLResponse(content=f"<h1>404 Not Found</h1><p>Path: {full_path}</p><p>Build Dir: {build_dir}</p>", status_code=404)
 
+
+class Api:
+    def save_file(self, filename, content_base64):
+        try:
+            # Use pywebview's save dialog
+            file_types = ('Excel Files (*.xlsx)', 'All files (*.*)')
+            save_path = webview.windows[0].create_file_dialog(
+                webview.SAVE_DIALOG, 
+                directory='', 
+                save_filename=filename,
+                file_types=file_types
+            )
+            
+            if save_path:
+                if isinstance(save_path, (list, tuple)):
+                    if not save_path: return {"success": False, "reason": "cancelled"}
+                    save_path = save_path[0]
+                
+                if save_path:
+                    # content_base64 might have header "data:application/vnd...;base64,"
+                    if ',' in content_base64:
+                        content_base64 = content_base64.split(',')[1]
+                    
+                    data = base64.b64decode(content_base64)
+                    with open(save_path, 'wb') as f:
+                        f.write(data)
+                    return {"success": True, "path": save_path}
+            return {"success": False, "reason": "cancelled"}
+        except Exception as e:
+            logger.error(f"Save file failed: {e}")
+            return {"success": False, "reason": str(e)}
+
 def start_server():
     # Run Uvicorn on a specific port
     logger.info("Starting Uvicorn server...")
@@ -119,13 +195,15 @@ if __name__ == "__main__":
 
     # Start the webview
     logger.info("Starting Webview...")
+    api = Api()
     try:
         webview.create_window(
             'MIS PORTAL', 
             'http://127.0.0.1:8000',
             width=1200,
             height=800,
-            resizable=True
+            resizable=True,
+            js_api=api
         )
         webview.start()
     except Exception as e:

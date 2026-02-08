@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
  import { Calendar, Download, Plus, Edit, Trash2, RefreshCcw, Upload, ChevronLeft, ChevronRight, MoreHorizontal } from 'lucide-react';
-import { formatDate } from '@/lib/utils';
+import { formatDate, downloadFile } from '@/lib/utils';
 import MaxMinEntryModal from '@/components/MaxMinEntryModal';
 import MaxMinAnalytics from '@/components/MaxMinAnalytics';
 import MaxMinImportPreviewModal from '@/components/MaxMinImportPreviewModal';
@@ -277,13 +277,7 @@ export default function MaxMinData() {
         { responseType: 'blob' }
       );
       
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `${selectedFeeder.name}_${year}_${month.toString().padStart(2, '0')}.xlsx`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      await downloadFile(response.data, `${selectedFeeder.name}_${year}_${month.toString().padStart(2, '0')}.xlsx`);
     } catch (error) {
       toast.error('Failed to export data');
     }
@@ -302,13 +296,7 @@ export default function MaxMinData() {
         { responseType: 'blob' }
       );
       
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `MaxMin_All_${year}_${month.toString().padStart(2, '0')}.xlsx`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      await downloadFile(response.data, `MaxMin_All_${year}_${month.toString().padStart(2, '0')}.xlsx`);
     } catch (error) {
       console.error('Failed to export all data:', error);
       toast.error('Failed to export all data');

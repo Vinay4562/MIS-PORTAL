@@ -304,14 +304,14 @@ def send_otp_email(user_email: str, otp: str, reason: str = "reset"):
         print(f"Error sending OTP email: {e}")
         raise HTTPException(status_code=500, detail="Failed to send OTP email")
 
-def send_reports_email(recipient_email: str, attachments: list):
+def send_reports_email(recipient_email: str, attachments: list, subject: str):
     try:
         sender_email = os.environ.get("SMTP_EMAIL")
         
         message = MIMEMultipart()
         message["From"] = sender_email
         message["To"] = recipient_email
-        message["Subject"] = "MIS Portal Reports"
+        message["Subject"] = subject
 
         body = "Please find the attached reports for the selected period."
         message.attach(MIMEText(body, "plain"))
@@ -326,7 +326,7 @@ def send_reports_email(recipient_email: str, attachments: list):
             )
             message.attach(part)
 
-        _send_email_core(recipient_email, "MIS Portal Reports", message)
+        _send_email_core(recipient_email, message["Subject"], message)
         
     except Exception as e:
         import traceback
@@ -6377,10 +6377,67 @@ async def send_reports_email_endpoint(
         if not attachments:
             raise HTTPException(status_code=400, detail="No reports could be generated for this period.")
             
+        # Determine Subject Logic
+        from datetime import date
+        short_month_year = date(year, month, 1).strftime("%b-%Y")
+        
+        # Mapping of report IDs to readable names
+        report_names_map = {
+            'fortnight': 'Fortnight',
+            'energy-consumption': 'Energy Consumption',
+            'boundary-meter': 'Boundary Meter reading', # Based on user example "Boundary Meter reading"
+            'kpi': 'KPI',
+            'line-losses': 'Line Losses',
+            'daily-max-mva': 'Daily Max MVA',
+            'ptr-max-min': 'PTR Max Min',
+            'tl-max-loading': 'TL Max Loading'
+        }
+
+        # Identify which reports were actually generated (or attempted)
+        # Note: 'report_ids' might be None/Empty (meaning ALL default), or a list.
+        # We need to reconstruct the list of report names that were part of this request.
+        
+        generated_report_names = []
+        
+        # List of all available report keys (excluding optional ones if not requested)
+        all_default_keys = [
+            'fortnight', 'boundary-meter', 'kpi', 'line-losses', 
+            'daily-max-mva', 'ptr-max-min', 'tl-max-loading'
+        ]
+        
+        # If report_ids is empty, it means all default reports
+        current_report_keys = report_ids if report_ids else all_default_keys
+        
+        # Filter out keys that might be in report_ids but are optional and not in map if any
+        # And ensure we use the readable names
+        for key in current_report_keys:
+             if key in report_names_map:
+                 generated_report_names.append(report_names_map[key])
+        
+        # Determine if it is "All Reports"
+        # Condition: report_ids is empty OR it contains all default keys (and maybe optional ones too)
+        # Simplify: If report_ids is empty -> All Reports
+        # If report_ids has all the default keys -> All Reports
+        
+        is_all_reports = False
+        if not report_ids:
+            is_all_reports = True
+        elif set(all_default_keys).issubset(set(report_ids)):
+            is_all_reports = True
+            
+        if is_all_reports:
+             subject = f"MIS Reports of {month_name} {year}"
+        elif len(generated_report_names) == 1:
+             subject = f"MIS Report of {generated_report_names[0]} of {short_month_year}"
+        else:
+             # Less than all, but more than 1 (or 0, but we checked attachments)
+             reports_str = ", ".join(generated_report_names)
+             subject = f"MIS Reports of {reports_str} of {short_month_year}"
+
         # Send Email in background
         import asyncio
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, send_reports_email, recipient_email, attachments)
+        await loop.run_in_executor(None, send_reports_email, recipient_email, attachments, subject)
         
         return {"message": f"Reports sent successfully to {recipient_email}"}
         

@@ -8,6 +8,7 @@ import { Download, Plus, Activity, Calendar, RefreshCcw, Upload, ChevronLeft, Ch
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { downloadFile } from '@/lib/utils';
 import EnergyTable from '@/components/EnergyTable';
 import EnergyEntryModal from '@/components/EnergyEntryModal';
 import EnergyAnalytics from '@/components/EnergyAnalytics';
@@ -107,13 +108,7 @@ export default function EnergyConsumption() {
         { responseType: 'blob' }
       );
       
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `${selectedSheet.name}_${year}_${month.toString().padStart(2, '0')}.xlsx`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      await downloadFile(response.data, `${selectedSheet.name}_${year}_${month.toString().padStart(2, '0')}.xlsx`);
     } catch (error) {
       toast.error('Failed to export data');
     }
@@ -126,13 +121,7 @@ export default function EnergyConsumption() {
         { responseType: 'blob' }
       );
       
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `Energy_Consumption_All_${month}-${year}.xlsx`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      await downloadFile(response.data, `Energy_Consumption_All_${month}-${year}.xlsx`);
       
       toast.success('Export All completed successfully');
     } catch (error) {

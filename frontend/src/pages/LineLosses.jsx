@@ -9,6 +9,7 @@ import ImportPreviewModal from '@/components/ImportPreviewModal';
 import FeederTable from '@/components/FeederTable';
 import AnalyticsCharts from '@/components/AnalyticsCharts';
 import { Download, Plus, Calendar, RefreshCcw, Upload, ChevronLeft, ChevronRight, MoreHorizontal } from 'lucide-react';
+import { downloadFile } from '@/lib/utils';
 import { FullPageLoader } from '@/components/ui/loader';
 import {
   DropdownMenu,
@@ -158,13 +159,7 @@ export default function LineLosses() {
         { responseType: 'blob' }
       );
       
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `${selectedFeeder.name}_${year}_${month}.xlsx`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      await downloadFile(response.data, `${selectedFeeder.name}_${year}_${month}.xlsx`);
       
       toast.success('Export completed successfully');
     } catch (error) {
@@ -180,13 +175,7 @@ export default function LineLosses() {
         { responseType: 'blob' }
       );
       
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `Line_Losses_All_${month}-${year}.xlsx`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      await downloadFile(response.data, `Line_Losses_All_${month}-${year}.xlsx`);
       
       toast.success('Export All completed successfully');
     } catch (error) {
