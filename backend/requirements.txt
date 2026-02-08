@@ -3,6 +3,7 @@ uvicorn==0.25.0
 motor==3.3.1
 pymongo==4.5.0
 python-jose==3.5.0
+PyJWT==2.10.1
 passlib==1.7.4
 python-multipart==0.0.21
 pandas==2.3.3
