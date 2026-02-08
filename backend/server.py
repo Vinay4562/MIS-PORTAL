@@ -54,9 +54,50 @@ def format_time(time_str):
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-def send_otp_email(user_email: str, otp: str, reason: str = "reset"):
+def _send_email_core(to_email: str, subject: str, message: MIMEMultipart):
+    """Core function to handle SMTP connection and sending with robust fallback."""
     sender_email = os.environ.get("SMTP_EMAIL")
     sender_password = os.environ.get("SMTP_PASSWORD")
+    # Default to port 587 (STARTTLS) which is often more reliable in cloud environments
+    smtp_server = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
+    smtp_port = int(os.environ.get("SMTP_PORT", 587))
+    
+    if not sender_email or not sender_password:
+        raise ValueError("SMTP configuration (email/password) missing in environment variables")
+
+    print(f"Connecting to SMTP server: {smtp_server}:{smtp_port} for {to_email}")
+    
+    try:
+        # Try primary configuration
+        if smtp_port == 465:
+            with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
+                server.login(sender_email, sender_password)
+                server.sendmail(sender_email, to_email, message.as_string())
+        else:
+            with smtplib.SMTP(smtp_server, smtp_port) as server:
+                server.starttls()
+                server.login(sender_email, sender_password)
+                server.sendmail(sender_email, to_email, message.as_string())
+        print(f"Email sent successfully to {to_email}")
+        return
+    except Exception as e:
+        print(f"Primary SMTP connection failed: {e}. Trying fallback to port 587/STARTTLS...")
+    
+    # Fallback to standard Gmail STARTTLS port 587 if primary failed and wasn't 587
+    if smtp_port != 587:
+        try:
+            with smtplib.SMTP("smtp.gmail.com", 587) as server:
+                server.starttls()
+                server.login(sender_email, sender_password)
+                server.sendmail(sender_email, to_email, message.as_string())
+            print(f"Email sent successfully using fallback to {to_email}")
+            return
+        except Exception as e:
+            print(f"Fallback SMTP connection failed: {e}")
+            raise e
+            
+def send_otp_email(user_email: str, otp: str, reason: str = "reset"):
+    sender_email = os.environ.get("SMTP_EMAIL")
     # Admin email is same as sender in this requirement
     admin_email = sender_email 
     
@@ -92,25 +133,15 @@ def send_otp_email(user_email: str, otp: str, reason: str = "reset"):
     message.attach(part2)
 
     try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(sender_email, sender_password)
-            server.sendmail(sender_email, admin_email, message.as_string())
+        _send_email_core(admin_email, message["Subject"], message)
     except Exception as e:
-        print(f"Error sending email: {e}")
+        print(f"Error sending OTP email: {e}")
         raise HTTPException(status_code=500, detail="Failed to send OTP email")
 
 def send_reports_email(recipient_email: str, attachments: list):
     try:
         sender_email = os.environ.get("SMTP_EMAIL")
-        sender_password = os.environ.get("SMTP_PASSWORD")
-        smtp_server = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
-        smtp_port = int(os.environ.get("SMTP_PORT", 465))
-
-        if not sender_email or not sender_password:
-            print("SMTP_EMAIL or SMTP_PASSWORD not set in environment variables")
-            # Log this but don't crash the server if possible, though here we raise to notify caller
-            raise ValueError("SMTP configuration (email/password) missing in environment variables")
-
+        
         message = MIMEMultipart()
         message["From"] = sender_email
         message["To"] = recipient_email
@@ -129,11 +160,7 @@ def send_reports_email(recipient_email: str, attachments: list):
             )
             message.attach(part)
 
-        print(f"Connecting to SMTP server: {smtp_server}:{smtp_port}")
-        with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
-            server.login(sender_email, sender_password)
-            server.sendmail(sender_email, recipient_email, message.as_string())
-        print(f"Email sent successfully to {recipient_email}")
+        _send_email_core(recipient_email, "MIS Portal Reports", message)
         
     except Exception as e:
         import traceback
