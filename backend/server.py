@@ -60,21 +60,21 @@ import ssl
 class IPv4SMTP(smtplib.SMTP):
     """SMTP client that forces IPv4 connection and tries all resolved addresses."""
     def _get_socket(self, host, port, timeout):
-        if self.debuglevel > 0:
-            self._print_debug('connect (IPv4):', (host, port))
+        print(f"DEBUG: IPv4SMTP connecting to {host}:{port}")
         
         # Get all IPv4 addresses
         try:
             addr_info = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+            print(f"DEBUG: Resolved {host} to {len(addr_info)} addresses: {[r[4] for r in addr_info]}")
         except socket.gaierror as e:
-            if self.debuglevel > 0:
-                self._print_debug('IPv4 resolution failed:', e)
+            print(f"DEBUG: IPv4 resolution failed: {e}")
             raise
 
         # Try each address until one works (Happy Eyeballs for IPv4)
         last_err = None
-        for res in addr_info:
+        for i, res in enumerate(addr_info):
             af, socktype, proto, canonname, sa = res
+            print(f"DEBUG: Connecting to IP {i+1}/{len(addr_info)}: {sa}")
             try:
                 sock = socket.socket(af, socktype, proto)
                 try:
@@ -82,13 +82,15 @@ class IPv4SMTP(smtplib.SMTP):
                     if self.source_address:
                         sock.bind(self.source_address)
                     sock.connect(sa)
+                    print(f"DEBUG: Connected to {sa}")
                     return sock # Success
                 except OSError as e:
+                    print(f"DEBUG: Connection to {sa} failed: {e}")
                     last_err = e
                     sock.close()
             except OSError as e:
+                print(f"DEBUG: Socket creation failed: {e}")
                 last_err = e
-                # socket creation failed
                 pass
         
         # If we get here, all attempts failed
@@ -99,19 +101,19 @@ class IPv4SMTP(smtplib.SMTP):
 class IPv4SMTP_SSL(smtplib.SMTP_SSL):
     """SMTP_SSL client that forces IPv4 connection and tries all resolved addresses."""
     def _get_socket(self, host, port, timeout):
-        if self.debuglevel > 0:
-            self._print_debug('connect (IPv4):', (host, port))
+        print(f"DEBUG: IPv4SMTP_SSL connecting to {host}:{port}")
         
         try:
             addr_info = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+            print(f"DEBUG: Resolved {host} to {len(addr_info)} addresses: {[r[4] for r in addr_info]}")
         except socket.gaierror as e:
-            if self.debuglevel > 0:
-                self._print_debug('IPv4 resolution failed:', e)
+            print(f"DEBUG: IPv4 resolution failed: {e}")
             raise
 
         last_err = None
-        for res in addr_info:
+        for i, res in enumerate(addr_info):
             af, socktype, proto, canonname, sa = res
+            print(f"DEBUG: Connecting to IP {i+1}/{len(addr_info)}: {sa}")
             try:
                 sock = socket.socket(af, socktype, proto)
                 try:
@@ -119,17 +121,21 @@ class IPv4SMTP_SSL(smtplib.SMTP_SSL):
                     if self.source_address:
                         sock.bind(self.source_address)
                     sock.connect(sa)
+                    print(f"DEBUG: Connected to {sa}, wrapping SSL...")
                     
                     # Connection successful, now wrap SSL
-                    # We must pass server_hostname=self._host to ensure SNI/cert check uses the hostname
                     try:
-                        ssl_sock = self.context.wrap_socket(sock, server_hostname=self._host)
+                        # Use 'host' argument explicitly for SNI
+                        ssl_sock = self.context.wrap_socket(sock, server_hostname=host)
+                        print(f"DEBUG: SSL Handshake success")
                         return ssl_sock
                     except Exception as ssl_err:
+                        print(f"DEBUG: SSL Wrap failed: {ssl_err}")
                         sock.close()
                         raise ssl_err
                         
                 except Exception as e:
+                    print(f"DEBUG: Connection to {sa} failed: {e}")
                     last_err = e
                     sock.close()
             except Exception as e:
@@ -175,12 +181,12 @@ def _send_email_core(to_email: str, subject: str, message: MIMEMultipart):
         try:
             if port == 465:
                 # Implicit SSL - Use IPv4 forced class
-                with IPv4SMTP_SSL(server_host, port, timeout=30) as server:
+                with IPv4SMTP_SSL(server_host, port, timeout=60) as server:
                     server.login(sender_email, sender_password)
                     server.sendmail(sender_email, to_email, message.as_string())
             else:
                 # Explicit SSL (STARTTLS) - usually port 587 - Use IPv4 forced class
-                with IPv4SMTP(server_host, port, timeout=30) as server:
+                with IPv4SMTP(server_host, port, timeout=60) as server:
                     server.starttls()
                     server.login(sender_email, sender_password)
                     server.sendmail(sender_email, to_email, message.as_string())
