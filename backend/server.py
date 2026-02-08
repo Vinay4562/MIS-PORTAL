@@ -146,8 +146,64 @@ class IPv4SMTP_SSL(smtplib.SMTP_SSL):
             raise last_err
         raise OSError("No IPv4 addresses found or all connection attempts failed")
 
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+import base64
+
 def _send_email_core(to_email: str, subject: str, message: MIMEMultipart):
-    """Core function to handle SMTP connection and sending with robust fallback and IPv4 forcing."""
+    """Core function to handle email sending using Gmail API."""
+    sender_email = os.environ.get("SMTP_EMAIL")
+    
+    # Gmail API Credentials
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    refresh_token = os.environ.get("GOOGLE_REFRESH_TOKEN")
+
+    if not all([sender_email, client_id, client_secret, refresh_token]):
+        # Fallback to SMTP if Gmail API creds are missing (for backward compatibility/local dev)
+        print("Warning: Gmail API credentials missing. Falling back to SMTP...")
+        _send_email_smtp_fallback(to_email, subject, message)
+        return
+
+    try:
+        # Construct Credentials object
+        creds = Credentials(
+            None, # access_token (will be refreshed)
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=client_id,
+            client_secret=client_secret
+        )
+
+        # Build Gmail Service
+        service = build('gmail', 'v1', credentials=creds)
+
+        # Create raw message
+        # message is already a MIMEMultipart object
+        # We need to encode it to base64url
+        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
+        body = {'raw': raw_message}
+
+        # Send email
+        print(f"Sending email via Gmail API to {to_email}...")
+        message = service.users().messages().send(userId="me", body=body).execute()
+        print(f"Email sent successfully! Message Id: {message['id']}")
+        return
+
+    except Exception as e:
+        print(f"Gmail API Error: {e}")
+        # Try fallback if API fails? Or just raise?
+        # If API fails (e.g. auth error), SMTP might not work either if blocked.
+        # But let's try fallback just in case we are on a system where SMTP works but API failed.
+        print("Attempting fallback to SMTP...")
+        try:
+            _send_email_smtp_fallback(to_email, subject, message)
+        except Exception as smtp_err:
+             print(f"Fallback SMTP also failed: {smtp_err}")
+             raise e # Raise the original API error as it's likely the primary config
+
+def _send_email_smtp_fallback(to_email: str, subject: str, message: MIMEMultipart):
+    """Legacy SMTP sending logic as fallback."""
     sender_email = os.environ.get("SMTP_EMAIL")
     sender_password = os.environ.get("SMTP_PASSWORD")
     
