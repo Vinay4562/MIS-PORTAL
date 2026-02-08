@@ -54,8 +54,64 @@ def format_time(time_str):
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
+import socket
+import ssl
+
+class IPv4SMTP(smtplib.SMTP):
+    """SMTP client that forces IPv4 connection."""
+    def _get_socket(self, host, port, timeout):
+        # Force IPv4 resolution
+        if self.debuglevel > 0:
+            self._print_debug('connect (IPv4):', (host, port))
+        
+        # Get IPv4 address manually
+        # socket.getaddrinfo(host, port, family=socket.AF_INET) returns list of tuples
+        try:
+            addr_info = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+        except socket.gaierror as e:
+            # If IPv4 resolution fails, let original logic try or raise
+            if self.debuglevel > 0:
+                self._print_debug('IPv4 resolution failed:', e)
+            raise
+            
+        family, type, proto, canonname, sockaddr = addr_info[0]
+        
+        new_socket = socket.socket(family, type, proto)
+        new_socket.settimeout(timeout)
+        if self.source_address:
+            new_socket.bind(self.source_address)
+        new_socket.connect(sockaddr)
+        return new_socket
+
+class IPv4SMTP_SSL(smtplib.SMTP_SSL):
+    """SMTP_SSL client that forces IPv4 connection."""
+    def _get_socket(self, host, port, timeout):
+        # Force IPv4 resolution
+        if self.debuglevel > 0:
+            self._print_debug('connect (IPv4):', (host, port))
+        
+        try:
+            addr_info = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+        except socket.gaierror as e:
+            if self.debuglevel > 0:
+                self._print_debug('IPv4 resolution failed:', e)
+            raise
+
+        family, type, proto, canonname, sockaddr = addr_info[0]
+        
+        new_socket = socket.socket(family, type, proto)
+        new_socket.settimeout(timeout)
+        if self.source_address:
+            new_socket.bind(self.source_address)
+        new_socket.connect(sockaddr)
+        
+        # Wrap SSL
+        # We must pass server_hostname=self._host to ensure SNI/cert check uses the hostname, not the IP
+        new_socket = self.context.wrap_socket(new_socket, server_hostname=self._host)
+        return new_socket
+
 def _send_email_core(to_email: str, subject: str, message: MIMEMultipart):
-    """Core function to handle SMTP connection and sending with robust fallback."""
+    """Core function to handle SMTP connection and sending with robust fallback and IPv4 forcing."""
     sender_email = os.environ.get("SMTP_EMAIL")
     sender_password = os.environ.get("SMTP_PASSWORD")
     
@@ -88,13 +144,13 @@ def _send_email_core(to_email: str, subject: str, message: MIMEMultipart):
         print(f"SMTP Attempt {i+1}/{len(attempts)}: Connecting to {server_host}:{port} for {to_email}")
         try:
             if port == 465:
-                # Implicit SSL
-                with smtplib.SMTP_SSL(server_host, port, timeout=30) as server:
+                # Implicit SSL - Use IPv4 forced class
+                with IPv4SMTP_SSL(server_host, port, timeout=30) as server:
                     server.login(sender_email, sender_password)
                     server.sendmail(sender_email, to_email, message.as_string())
             else:
-                # Explicit SSL (STARTTLS) - usually port 587
-                with smtplib.SMTP(server_host, port, timeout=30) as server:
+                # Explicit SSL (STARTTLS) - usually port 587 - Use IPv4 forced class
+                with IPv4SMTP(server_host, port, timeout=30) as server:
                     server.starttls()
                     server.login(sender_email, sender_password)
                     server.sendmail(sender_email, to_email, message.as_string())
