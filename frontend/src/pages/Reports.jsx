@@ -119,7 +119,10 @@ export default function Reports() {
                 endpoint = `/reports/tl-max-loading-format4/preview/${year}/${month}`;
             }
 
-            const response = await axios.get(`${API}${endpoint}`);
+            const token = localStorage.getItem('token');
+            const response = await axios.get(`${API}${endpoint}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
             setPreviewData(response.data);
         } catch (error) {
             console.error('Preview error:', error);
@@ -154,8 +157,10 @@ export default function Reports() {
         if (!silent) setLoading(report.id);
         if (!silent) toast.info(`Generating ${report.title}...`);
         
+        const token = localStorage.getItem('token');
         const response = await axios.get(`${API}${endpoints[report.id]}`, {
-          responseType: 'blob'
+          responseType: 'blob',
+          headers: { Authorization: `Bearer ${token}` }
         });
         
         // Extract filename from header or generate default

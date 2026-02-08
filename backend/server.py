@@ -7,7 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 from pathlib import Path
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, ValidationError
 from typing import List, Optional
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -103,6 +103,13 @@ def send_reports_email(recipient_email: str, attachments: list):
     try:
         sender_email = os.environ.get("SMTP_EMAIL")
         sender_password = os.environ.get("SMTP_PASSWORD")
+        smtp_server = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
+        smtp_port = int(os.environ.get("SMTP_PORT", 465))
+
+        if not sender_email or not sender_password:
+            print("SMTP_EMAIL or SMTP_PASSWORD not set in environment variables")
+            # Log this but don't crash the server if possible, though here we raise to notify caller
+            raise ValueError("SMTP configuration (email/password) missing in environment variables")
 
         message = MIMEMultipart()
         message["From"] = sender_email
@@ -122,11 +129,17 @@ def send_reports_email(recipient_email: str, attachments: list):
             )
             message.attach(part)
 
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        print(f"Connecting to SMTP server: {smtp_server}:{smtp_port}")
+        with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
             server.login(sender_email, sender_password)
             server.sendmail(sender_email, recipient_email, message.as_string())
+        print(f"Email sent successfully to {recipient_email}")
+        
     except Exception as e:
+        import traceback
+        error_msg = traceback.format_exc()
         print(f"Error sending reports email: {e}")
+        print(f"Traceback: {error_msg}")
         raise HTTPException(status_code=500, detail=f"Failed to send email: {str(e)}")
 
 mongo_url = os.environ['MONGO_URL']
@@ -166,6 +179,8 @@ async def startup_db_client():
 origins = [
     "http://localhost:3000",
     "https://mis-portal-liard.vercel.app",
+    "https://mis-portal-production.up.railway.app",
+    "https://mis-portal.vercel.app"
 ]
 
 env_origins = os.environ.get('CORS_ORIGINS', '')
@@ -176,6 +191,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
     allow_origins=origins,
+    allow_origin_regex=r"https://.*\.railway\.app|https://.*\.vercel\.app",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -220,7 +236,7 @@ class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     email: str
-    full_name: str
+    full_name: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class UserInDB(User):
@@ -368,7 +384,12 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         user = await db.users.find_one({"id": user_id}, {"_id": 0})
         if user is None:
             raise HTTPException(status_code=401, detail="User not found")
-        return User(**user)
+        try:
+            return User(**user)
+        except ValidationError as e:
+            print(f"User validation error for {user_id}: {e}")
+            # Attempt to return user with minimal fields if validation fails
+            return User(email=user.get("email", ""), id=user_id, full_name=user.get("full_name", ""))
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except Exception:
@@ -5598,7 +5619,6 @@ async def get_ptr_max_min_preview(
         
     return data
 
-@api_router.get("/reports/ptr-max-min-format1/export/{year}/{month}")
 async def _generate_ptr_max_min_report_wb(year: int, month: int, current_user: User):
     data = await get_ptr_max_min_preview(year, month, current_user)
     
@@ -5720,19 +5740,25 @@ async def _generate_ptr_max_min_report_wb(year: int, month: int, current_user: U
 
 @api_router.get("/reports/ptr-max-min-format1/export/{year}/{month}")
 async def export_ptr_max_min_report(
-    year: int,
-    month: int,
+    year: str,
+    month: str,
     current_user: User = Depends(get_current_user)
 ):
     try:
-        wb = await _generate_ptr_max_min_report_wb(year, month, current_user)
-        month_name = calendar.month_name[month]
+        try:
+            year_int = int(str(year).split('.')[0])
+            month_int = int(str(month).split('.')[0])
+        except ValueError:
+            return JSONResponse(status_code=422, content={"detail": f"Invalid year or month format. Received: year={year}, month={month}"})
+
+        wb = await _generate_ptr_max_min_report_wb(year_int, month_int, current_user)
+        month_name = calendar.month_name[month_int]
         
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
         
-        filename = f"PTR_Max_Min_{month_name}_{year}.xlsx"
+        filename = f"PTR_Max_Min_{month_name}_{year_int}.xlsx"
         
         return StreamingResponse(
             output,
@@ -5895,7 +5921,6 @@ async def get_tl_max_loading_preview(
             
     return data
 
-@api_router.get("/reports/tl-max-loading-format4/export/{year}/{month}")
 async def _generate_tl_max_loading_report_wb(year: int, month: int, current_user: User):
     print(f"Exporting TL Max Loading for {year}-{month}")
     data = await get_tl_max_loading_preview(year, month, current_user)
@@ -5988,19 +6013,25 @@ async def _generate_tl_max_loading_report_wb(year: int, month: int, current_user
 
 @api_router.get("/reports/tl-max-loading-format4/export/{year}/{month}")
 async def export_tl_max_loading_report(
-    year: int,
-    month: int,
+    year: str,
+    month: str,
     current_user: User = Depends(get_current_user)
 ):
     try:
-        wb = await _generate_tl_max_loading_report_wb(year, month, current_user)
-        month_name = calendar.month_name[month]
+        try:
+            year_int = int(str(year).split('.')[0])
+            month_int = int(str(month).split('.')[0])
+        except ValueError:
+            return JSONResponse(status_code=422, content={"detail": f"Invalid year or month format. Received: year={year}, month={month}"})
+
+        wb = await _generate_tl_max_loading_report_wb(year_int, month_int, current_user)
+        month_name = calendar.month_name[month_int]
         
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
         
-        filename = f"TL_Max_Loading_{month_name}_{year}.xlsx"
+        filename = f"TL_Max_Loading_{month_name}_{year_int}.xlsx"
         
         return StreamingResponse(
             output,
