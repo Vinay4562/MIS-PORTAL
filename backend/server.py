@@ -58,35 +58,47 @@ import socket
 import ssl
 
 class IPv4SMTP(smtplib.SMTP):
-    """SMTP client that forces IPv4 connection."""
+    """SMTP client that forces IPv4 connection and tries all resolved addresses."""
     def _get_socket(self, host, port, timeout):
-        # Force IPv4 resolution
         if self.debuglevel > 0:
             self._print_debug('connect (IPv4):', (host, port))
         
-        # Get IPv4 address manually
-        # socket.getaddrinfo(host, port, family=socket.AF_INET) returns list of tuples
+        # Get all IPv4 addresses
         try:
             addr_info = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
         except socket.gaierror as e:
-            # If IPv4 resolution fails, let original logic try or raise
             if self.debuglevel > 0:
                 self._print_debug('IPv4 resolution failed:', e)
             raise
-            
-        family, type, proto, canonname, sockaddr = addr_info[0]
+
+        # Try each address until one works (Happy Eyeballs for IPv4)
+        last_err = None
+        for res in addr_info:
+            af, socktype, proto, canonname, sa = res
+            try:
+                sock = socket.socket(af, socktype, proto)
+                try:
+                    sock.settimeout(timeout)
+                    if self.source_address:
+                        sock.bind(self.source_address)
+                    sock.connect(sa)
+                    return sock # Success
+                except OSError as e:
+                    last_err = e
+                    sock.close()
+            except OSError as e:
+                last_err = e
+                # socket creation failed
+                pass
         
-        new_socket = socket.socket(family, type, proto)
-        new_socket.settimeout(timeout)
-        if self.source_address:
-            new_socket.bind(self.source_address)
-        new_socket.connect(sockaddr)
-        return new_socket
+        # If we get here, all attempts failed
+        if last_err:
+            raise last_err
+        raise OSError("No IPv4 addresses found or all connection attempts failed")
 
 class IPv4SMTP_SSL(smtplib.SMTP_SSL):
-    """SMTP_SSL client that forces IPv4 connection."""
+    """SMTP_SSL client that forces IPv4 connection and tries all resolved addresses."""
     def _get_socket(self, host, port, timeout):
-        # Force IPv4 resolution
         if self.debuglevel > 0:
             self._print_debug('connect (IPv4):', (host, port))
         
@@ -97,18 +109,36 @@ class IPv4SMTP_SSL(smtplib.SMTP_SSL):
                 self._print_debug('IPv4 resolution failed:', e)
             raise
 
-        family, type, proto, canonname, sockaddr = addr_info[0]
-        
-        new_socket = socket.socket(family, type, proto)
-        new_socket.settimeout(timeout)
-        if self.source_address:
-            new_socket.bind(self.source_address)
-        new_socket.connect(sockaddr)
-        
-        # Wrap SSL
-        # We must pass server_hostname=self._host to ensure SNI/cert check uses the hostname, not the IP
-        new_socket = self.context.wrap_socket(new_socket, server_hostname=self._host)
-        return new_socket
+        last_err = None
+        for res in addr_info:
+            af, socktype, proto, canonname, sa = res
+            try:
+                sock = socket.socket(af, socktype, proto)
+                try:
+                    sock.settimeout(timeout)
+                    if self.source_address:
+                        sock.bind(self.source_address)
+                    sock.connect(sa)
+                    
+                    # Connection successful, now wrap SSL
+                    # We must pass server_hostname=self._host to ensure SNI/cert check uses the hostname
+                    try:
+                        ssl_sock = self.context.wrap_socket(sock, server_hostname=self._host)
+                        return ssl_sock
+                    except Exception as ssl_err:
+                        sock.close()
+                        raise ssl_err
+                        
+                except Exception as e:
+                    last_err = e
+                    sock.close()
+            except Exception as e:
+                last_err = e
+                pass
+                
+        if last_err:
+            raise last_err
+        raise OSError("No IPv4 addresses found or all connection attempts failed")
 
 def _send_email_core(to_email: str, subject: str, message: MIMEMultipart):
     """Core function to handle SMTP connection and sending with robust fallback and IPv4 forcing."""
