@@ -58,43 +58,61 @@ def _send_email_core(to_email: str, subject: str, message: MIMEMultipart):
     """Core function to handle SMTP connection and sending with robust fallback."""
     sender_email = os.environ.get("SMTP_EMAIL")
     sender_password = os.environ.get("SMTP_PASSWORD")
-    # Default to port 587 (STARTTLS) which is often more reliable in cloud environments
+    
+    # Default to port 587 (STARTTLS)
     smtp_server = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
-    smtp_port = int(os.environ.get("SMTP_PORT", 587))
+    env_port = int(os.environ.get("SMTP_PORT", 587))
     
     if not sender_email or not sender_password:
         raise ValueError("SMTP configuration (email/password) missing in environment variables")
 
-    print(f"Connecting to SMTP server: {smtp_server}:{smtp_port} for {to_email}")
+    # Define attempts: [primary_config, fallback_config]
+    attempts = []
     
-    try:
-        # Try primary configuration
-        if smtp_port == 465:
-            with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
-                server.login(sender_email, sender_password)
-                server.sendmail(sender_email, to_email, message.as_string())
-        else:
-            with smtplib.SMTP(smtp_server, smtp_port) as server:
-                server.starttls()
-                server.login(sender_email, sender_password)
-                server.sendmail(sender_email, to_email, message.as_string())
-        print(f"Email sent successfully to {to_email}")
-        return
-    except Exception as e:
-        print(f"Primary SMTP connection failed: {e}. Trying fallback to port 587/STARTTLS...")
+    # Attempt 1: Configured port
+    attempts.append((smtp_server, env_port))
     
-    # Fallback to standard Gmail STARTTLS port 587 if primary failed and wasn't 587
-    if smtp_port != 587:
+    # Attempt 2: The alternative port (if 587 -> 465, if 465 -> 587)
+    if env_port == 587:
+        attempts.append((smtp_server, 465))
+    elif env_port == 465:
+        attempts.append((smtp_server, 587))
+    else:
+        # If user configured weird port (e.g. 25), try both standard ones as fallback
+        attempts.append((smtp_server, 587))
+        attempts.append((smtp_server, 465))
+
+    last_error = None
+
+    for i, (server_host, port) in enumerate(attempts):
+        print(f"SMTP Attempt {i+1}/{len(attempts)}: Connecting to {server_host}:{port} for {to_email}")
         try:
-            with smtplib.SMTP("smtp.gmail.com", 587) as server:
-                server.starttls()
-                server.login(sender_email, sender_password)
-                server.sendmail(sender_email, to_email, message.as_string())
-            print(f"Email sent successfully using fallback to {to_email}")
-            return
+            if port == 465:
+                # Implicit SSL
+                with smtplib.SMTP_SSL(server_host, port, timeout=30) as server:
+                    server.login(sender_email, sender_password)
+                    server.sendmail(sender_email, to_email, message.as_string())
+            else:
+                # Explicit SSL (STARTTLS) - usually port 587
+                with smtplib.SMTP(server_host, port, timeout=30) as server:
+                    server.starttls()
+                    server.login(sender_email, sender_password)
+                    server.sendmail(sender_email, to_email, message.as_string())
+            
+            print(f"Email sent successfully to {to_email} using port {port}")
+            return # Success!
+            
         except Exception as e:
-            print(f"Fallback SMTP connection failed: {e}")
-            raise e
+            print(f"SMTP Attempt {i+1} failed ({server_host}:{port}): {e}")
+            last_error = e
+            # Continue to next attempt
+    
+    # If we exit the loop, all attempts failed
+    print(f"All SMTP attempts failed. Last error: {last_error}")
+    if last_error:
+        raise last_error
+    else:
+        raise HTTPException(status_code=500, detail="Failed to send email (unknown error)")
             
 def send_otp_email(user_email: str, otp: str, reason: str = "reset"):
     sender_email = os.environ.get("SMTP_EMAIL")
