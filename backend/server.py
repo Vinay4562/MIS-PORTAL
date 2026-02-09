@@ -4613,6 +4613,83 @@ async def get_boundary_meter_data(year: int, month: int):
         "month_name": calendar.month_name[month]
     }
 
+@api_router.get("/reports/status/{year}/{month}")
+async def check_reports_status(
+    year: int,
+    month: int,
+    current_user: User = Depends(get_current_user)
+):
+    import calendar
+    
+    try:
+        # 1. Calculate Expected Counts
+        last_day = calendar.monthrange(year, month)[1]
+        days_in_month = last_day # Number of days
+        
+        start_date = f"{year}-{month:02d}-01"
+        end_date = f"{year}-{month:02d}-{last_day}"
+        
+        # 2. Check Line Losses (entries)
+        # Count active feeders
+        num_feeders = await db.feeders.count_documents({})
+        expected_entries = num_feeders * days_in_month
+        
+        actual_entries = await db.entries.count_documents({
+            "date": {"$gte": start_date, "$lte": end_date}
+        })
+        
+        line_losses_ready = actual_entries >= expected_entries
+        
+        # 3. Check Max Min Reports (max_min_entries)
+        # Count active max_min_feeders
+        num_max_min_feeders = await db.max_min_feeders.count_documents({})
+        expected_max_min_entries = num_max_min_feeders * days_in_month
+        
+        actual_max_min_entries = await db.max_min_entries.count_documents({
+            "date": {"$gte": start_date, "$lte": end_date}
+        })
+        
+        max_min_ready = actual_max_min_entries >= expected_max_min_entries
+        
+        # 4. Check Boundary Meter (energy_entries - 33KV)
+        sheet_33kv = await db.energy_sheets.find_one({"name": "33KV"})
+        boundary_meter_ready = False
+        if sheet_33kv:
+            actual_energy_entries = await db.energy_entries.count_documents({
+                "sheet_id": sheet_33kv['id'],
+                "date": {"$gte": start_date, "$lte": end_date}
+            })
+            boundary_meter_ready = actual_energy_entries >= days_in_month
+            
+        # 5. Compile Status
+        missing_reports = []
+        
+        if not line_losses_ready:
+            missing_reports.append("Line Losses")
+            
+        if not max_min_ready:
+            # These all depend on max_min data
+            missing_reports.append("Fortnight")
+            missing_reports.append("Daily Max MVA (SAP)")
+            missing_reports.append("KPI")
+            missing_reports.append("PTR Max–Min (Format-1)")
+            missing_reports.append("TL Max Loading (Format-4)")
+            
+        if not boundary_meter_ready:
+            missing_reports.append("Boundary Meter Reading (33KV)")
+            
+        all_ready = len(missing_reports) == 0
+        
+        return {
+            "all_ready": all_ready,
+            "missing_reports": missing_reports
+        }
+
+    except Exception as e:
+        print(f"Error checking report status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @api_router.get("/reports/boundary-meter-33kv/data/{year}/{month}")
 async def get_boundary_meter_report_json(
     year: int,

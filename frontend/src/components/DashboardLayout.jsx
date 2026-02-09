@@ -3,6 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/components/ThemeProvider';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import ReminderBanner from './ReminderBanner';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -176,6 +177,8 @@ export default function DashboardLayout({ children }) {
                 <Menu className="w-6 h-6" />
               </button>
             </div>
+
+            <ReminderBanner />
 
             <div className="flex items-center gap-3 ml-auto">
               <span className="text-sm font-medium text-slate-700 dark:text-slate-200 hidden md:inline-block">

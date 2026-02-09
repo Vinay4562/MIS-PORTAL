@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { FileText, Eye, Download, Calendar, Mail } from 'lucide-react';
+import { FileText, Eye, Download, Calendar, Mail, Check, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ReportPreviewModal } from '@/components/ReportPreviewModal';
 import { Loader } from '@/components/ui/loader';
@@ -46,6 +46,38 @@ export default function Reports() {
   const [recipientEmail, setRecipientEmail] = useState('');
   const [sendingEmail, setSendingEmail] = useState(false);
   const [selectedReportIds, setSelectedReportIds] = useState(REPORTS.map(r => r.id));
+
+  // Report Status State
+  const [reportStatus, setReportStatus] = useState(null); // 'ready' | 'not_ready' | null
+  const [missingReports, setMissingReports] = useState([]);
+  const [statusLoading, setStatusLoading] = useState(false);
+
+  const fetchReportStatus = async (selectedYear, selectedMonth) => {
+    setStatusLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.get(`${API}/reports/status/${selectedYear}/${selectedMonth}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      if (response.data.all_ready) {
+        setReportStatus('ready');
+        setMissingReports([]);
+      } else {
+        setReportStatus('not_ready');
+        setMissingReports(response.data.missing_reports);
+      }
+    } catch (error) {
+      console.error("Failed to fetch report status:", error);
+      // We don't want to block the UI with an error toast if just the status check fails,
+      // but maybe a small indicator or just log it. 
+      // User said "Reports not ready" condition is "One or more reports do not have data".
+      // If the check itself fails, we probably shouldn't show "All ready".
+      setReportStatus(null); 
+    } finally {
+      setStatusLoading(false);
+    }
+  };
 
   const handleSendEmail = async () => {
     if (!recipientEmail) {
@@ -92,6 +124,7 @@ export default function Reports() {
 
   const handleSubmitDateSelection = () => {
     setShowDateSelector(false);
+    fetchReportStatus(year, month);
   };
 
   const handlePreview = async (report) => {
@@ -313,6 +346,50 @@ export default function Reports() {
         </Button>
     </div>
   </div>
+
+      {/* Report Status Indicator */}
+      {!showDateSelector && (
+        <div className={`p-4 rounded-lg border ${
+          statusLoading ? 'bg-slate-50 border-slate-200' :
+          reportStatus === 'ready' ? 'bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800' : 
+          reportStatus === 'not_ready' ? 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800' : 
+          'bg-slate-50 border-slate-200'
+        }`}>
+          <div className="flex items-start gap-3">
+            {statusLoading ? (
+               <Loader className="w-5 h-5 animate-spin text-slate-500" />
+            ) : reportStatus === 'ready' ? (
+              <Check className="w-5 h-5 text-green-600 dark:text-green-400 mt-0.5" />
+            ) : reportStatus === 'not_ready' ? (
+              <X className="w-5 h-5 text-red-600 dark:text-red-400 mt-0.5" />
+            ) : null}
+            
+            <div>
+              {statusLoading ? (
+                <p className="text-slate-600 dark:text-slate-400">Checking reports status...</p>
+              ) : reportStatus === 'ready' ? (
+                <p className="text-green-700 dark:text-green-300 font-medium">
+                  All reports are ready. You can download and mail the reports for the selected Month and Year.
+                </p>
+              ) : reportStatus === 'not_ready' ? (
+                <div className="space-y-2">
+                  <p className="text-red-700 dark:text-red-300 font-medium">Reports are not ready.</p>
+                  {missingReports.length > 0 && (
+                    <div className="text-sm text-red-600 dark:text-red-400">
+                      <p className="font-semibold mb-1">Missing data for:</p>
+                      <ul className="list-disc list-inside space-y-0.5 ml-1">
+                        {missingReports.map((report, idx) => (
+                          <li key={idx}>{report}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
         {REPORTS.map((report) => (
