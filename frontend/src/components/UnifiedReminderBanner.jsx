@@ -106,7 +106,7 @@ const UnifiedReminderBanner = () => {
       <style>
         {`
           @keyframes unified-marquee {
-            0% { transform: translateX(100%); }
+            0% { transform: translateX(100vw); }
             100% { transform: translateX(-100%); }
           }
           @keyframes glow-pulse {
@@ -114,7 +114,7 @@ const UnifiedReminderBanner = () => {
             50% { filter: drop-shadow(0 0 8px rgba(220, 38, 38, 1)); opacity: 0.8; }
           }
           .animate-unified-marquee {
-            animation: unified-marquee ${Math.max(5, combinedMessage.length * 0.05)}s linear infinite;
+            animation: unified-marquee ${Math.max(20, combinedMessage.length * 0.15)}s linear infinite;
           }
           .animate-glow-pulse {
             animation: glow-pulse 2s ease-in-out infinite;
@@ -126,7 +126,7 @@ const UnifiedReminderBanner = () => {
         `}
       </style>
       <div 
-        className="w-full absolute whitespace-nowrap animate-unified-marquee banner-container"
+        className="absolute whitespace-nowrap animate-unified-marquee banner-container"
         role="status"
         aria-live="polite"
       >
