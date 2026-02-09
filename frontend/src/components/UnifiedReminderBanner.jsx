@@ -109,20 +109,28 @@ const UnifiedReminderBanner = () => {
             0% { transform: translateX(100%); }
             100% { transform: translateX(-100%); }
           }
-          .animate-unified-marquee {
-            animation: unified-marquee ${Math.max(20, combinedMessage.length * 0.2)}s linear infinite;
+          @keyframes glow-pulse {
+            0%, 100% { filter: drop-shadow(0 0 2px rgba(220, 38, 38, 0.5)); opacity: 1; }
+            50% { filter: drop-shadow(0 0 8px rgba(220, 38, 38, 1)); opacity: 0.8; }
           }
-          .animate-unified-marquee:hover {
+          .animate-unified-marquee {
+            animation: unified-marquee ${Math.max(5, combinedMessage.length * 0.05)}s linear infinite;
+          }
+          .animate-glow-pulse {
+            animation: glow-pulse 2s ease-in-out infinite;
+          }
+          .banner-container:hover .animate-unified-marquee,
+          .banner-container:hover .animate-glow-pulse {
             animation-play-state: paused;
           }
         `}
       </style>
       <div 
-        className="w-full absolute whitespace-nowrap animate-unified-marquee"
+        className="w-full absolute whitespace-nowrap animate-unified-marquee banner-container"
         role="status"
         aria-live="polite"
       >
-        <span className="text-red-600 dark:text-red-400 font-bold text-lg drop-shadow-sm">
+        <span className="text-red-600 dark:text-red-400 font-bold text-lg animate-glow-pulse inline-block">
           {combinedMessage}
         </span>
       </div>
