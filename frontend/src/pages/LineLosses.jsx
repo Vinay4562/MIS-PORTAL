@@ -52,11 +52,26 @@ export default function LineLosses() {
   const [initialized, setInitialized] = useState(false);
   const [importPreviewOpen, setImportPreviewOpen] = useState(false);
   const [importData, setImportData] = useState([]);
+  const [dailyStatus, setDailyStatus] = useState(null);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
     initializeFeeders();
+    fetchDailyStatus();
   }, []);
+
+  const fetchDailyStatus = async () => {
+    try {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+        const response = await axios.get(`${API}/daily-status`, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        setDailyStatus(response.data.line_losses);
+    } catch (e) {
+        console.error("Failed to fetch daily status", e);
+    }
+  };
 
   const initializeFeeders = async () => {
     try {
@@ -135,11 +150,13 @@ export default function LineLosses() {
   const handleEntryCreated = (newEntry) => {
     setEntries([...entries, newEntry].sort((a, b) => a.date.localeCompare(b.date)));
     toast.success('Data Saved');
+    fetchDailyStatus();
   };
 
   const handleEntryUpdated = (updatedEntry) => {
     setEntries(entries.map(e => e.id === updatedEntry.id ? updatedEntry : e));
     toast.success('Entry updated successfully');
+    fetchDailyStatus();
   };
 
   const handleEntryDeleted = async (entryId) => {
@@ -147,6 +164,7 @@ export default function LineLosses() {
       await axios.delete(`${API}/entries/${entryId}`);
       setEntries(entries.filter(e => e.id !== entryId));
       toast.success('Entry deleted successfully');
+      fetchDailyStatus();
     } catch (error) {
       toast.error('Failed to delete entry');
     }
@@ -229,6 +247,7 @@ export default function LineLosses() {
       toast.success('Data imported successfully');
       setImportPreviewOpen(false);
       fetchEntries(selectedFeeder.id, year, month); // Refresh
+      fetchDailyStatus();
     } catch (error) {
       console.error('Import failed:', error);
       toast.error('Failed to import data');
@@ -307,9 +326,16 @@ export default function LineLosses() {
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
         <div className="flex w-full justify-between items-start lg:w-auto lg:block">
           <div>
-            <h1 className="text-2xl md:text-3xl font-heading font-bold text-slate-900 dark:text-slate-100">
-              Line Losses Management
-            </h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl md:text-3xl font-heading font-bold text-slate-900 dark:text-slate-100">
+                Line Losses Management
+              </h1>
+              {dailyStatus?.complete && (
+                <span className="text-sm font-medium text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/30 px-2 py-1 rounded-md border border-green-200 dark:border-green-800 animate-in fade-in zoom-in duration-300">
+                  Data Updated Today
+                </span>
+              )}
+            </div>
             <p className="text-sm md:text-base text-slate-600 dark:text-slate-400 mt-1">
               {monthNames[month - 1]} {year}
             </p>

@@ -35,10 +35,25 @@ export default function EnergyConsumption() {
   const [editingEntry, setEditingEntry] = useState(null);
   const [importPreviewOpen, setImportPreviewOpen] = useState(false);
   const [importData, setImportData] = useState([]);
+  const [dailyStatus, setDailyStatus] = useState(null);
 
   useEffect(() => {
     initializeModule();
+    fetchDailyStatus();
   }, []);
+
+  const fetchDailyStatus = async () => {
+    try {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+        const response = await axios.get(`${API}/daily-status`, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        setDailyStatus(response.data.energy_consumption);
+    } catch (e) {
+        console.error("Failed to fetch daily status", e);
+    }
+  };
 
   const initializeModule = async () => {
     try {
@@ -140,7 +155,7 @@ export default function EnergyConsumption() {
     fetchEntries(selectedSheet.id, year, month);
     toast.success('Data Saved');
     setEditingEntry(null);
-    
+    fetchDailyStatus();
   };
 
   const handleEdit = (entry) => {
@@ -155,6 +170,7 @@ export default function EnergyConsumption() {
         await axios.delete(`${API}/energy/entries/${entry.id}`);
         toast.success('Entry deleted successfully');
         fetchEntries(selectedSheet.id, year, month);
+        fetchDailyStatus();
     } catch (error) {
         console.error('Failed to delete entry:', error);
         toast.error('Failed to delete entry');
@@ -197,7 +213,8 @@ export default function EnergyConsumption() {
       });
       toast.success('Data imported successfully');
       setImportPreviewOpen(false);
-      fetchEntries(selectedSheet.id, year, month);
+      fetchEntries(selectedSheet.id, year, month); // Refresh
+      fetchDailyStatus();
     } catch (error) {
       console.error('Import failed:', error);
       toast.error('Failed to import data');
@@ -272,10 +289,17 @@ export default function EnergyConsumption() {
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
         <div className="flex w-full justify-between items-start lg:w-auto lg:block">
           <div>
-            <h1 className="text-2xl md:text-3xl font-heading font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-              <Activity className="w-6 h-6 md:w-8 md:h-8 text-blue-600" />
-              Energy Consumption
-            </h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl md:text-3xl font-heading font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                <Activity className="w-6 h-6 md:w-8 md:h-8 text-blue-600" />
+                Energy Consumption
+              </h1>
+              {dailyStatus?.complete && (
+                  <span className="text-sm font-medium text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/30 px-2 py-1 rounded-md border border-green-200 dark:border-green-800 animate-in fade-in zoom-in duration-300">
+                    Data Updated Today
+                  </span>
+              )}
+            </div>
             <p className="text-sm md:text-base text-slate-500 dark:text-slate-400 mt-1">
               {monthNames[month - 1]} {year}
             </p>

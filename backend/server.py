@@ -6526,6 +6526,106 @@ async def send_reports_email_endpoint(
         print(f"Send mail error: {error_msg}")
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
+@api_router.get("/daily-status")
+async def check_daily_status(current_user: User = Depends(get_current_user)) -> dict:
+    try:
+        today = datetime.now().date()
+        today_str = today.strftime("%Y-%m-%d")
+        
+        # 1. Line Losses
+        feeders = await db.feeders.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(None)
+        feeder_ids = [f['id'] for f in feeders]
+        feeder_map = {f['id']: f['name'] for f in feeders}
+        
+        line_losses_entries = await db.entries.find({
+            "date": today_str,
+            "feeder_id": {"$in": feeder_ids}
+        }, {"feeder_id": 1}).to_list(None)
+        
+        entered_feeder_ids = {e['feeder_id'] for e in line_losses_entries}
+        missing_line_losses = [feeder_map[fid] for fid in feeder_ids if fid not in entered_feeder_ids]
+        
+        line_losses_status = {
+            "complete": len(missing_line_losses) == 0,
+            "missing_feeders": missing_line_losses,
+            "missing_dates": []
+        }
+        
+        # If no entries for today, check last 2 days
+        if len(entered_feeder_ids) == 0:
+             # Check yesterday
+             yesterday = today - timedelta(days=1)
+             yesterday_str = yesterday.strftime("%Y-%m-%d")
+             yesterday_count = await db.entries.count_documents({"date": yesterday_str})
+             
+             if yesterday_count == 0:
+                 # Missing today and yesterday
+                 line_losses_status["missing_dates"] = [yesterday_str, today_str]
+
+        # 2. Energy Consumption
+        sheets = await db.energy_sheets.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(None)
+        sheet_ids = [s['id'] for s in sheets]
+        sheet_map = {s['id']: s['name'] for s in sheets}
+        
+        energy_entries = await db.energy_entries.find({
+            "date": today_str,
+            "sheet_id": {"$in": sheet_ids}
+        }, {"sheet_id": 1}).to_list(None)
+        
+        entered_sheet_ids = {e['sheet_id'] for e in energy_entries}
+        missing_energy = [sheet_map[sid] for sid in sheet_ids if sid not in entered_sheet_ids]
+        
+        energy_status = {
+            "complete": len(missing_energy) == 0,
+            "missing_sheets": missing_energy,
+             "missing_dates": []
+        }
+        
+        if len(entered_sheet_ids) == 0:
+             yesterday = today - timedelta(days=1)
+             yesterday_str = yesterday.strftime("%Y-%m-%d")
+             yesterday_count = await db.energy_entries.count_documents({"date": yesterday_str})
+             
+             if yesterday_count == 0:
+                 energy_status["missing_dates"] = [yesterday_str, today_str]
+
+        # 3. Max-Min Data
+        mm_feeders = await db.max_min_feeders.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(None)
+        mm_feeder_ids = [f['id'] for f in mm_feeders]
+        mm_feeder_map = {f['id']: f['name'] for f in mm_feeders}
+        
+        mm_entries = await db.max_min_entries.find({
+            "date": today_str,
+            "feeder_id": {"$in": mm_feeder_ids}
+        }, {"feeder_id": 1}).to_list(None)
+        
+        entered_mm_ids = {e['feeder_id'] for e in mm_entries}
+        missing_mm = [mm_feeder_map[fid] for fid in mm_feeder_ids if fid not in entered_mm_ids]
+        
+        max_min_status = {
+            "complete": len(missing_mm) == 0,
+            "missing_feeders": missing_mm,
+            "missing_dates": []
+        }
+        
+        if len(entered_mm_ids) == 0:
+             yesterday = today - timedelta(days=1)
+             yesterday_str = yesterday.strftime("%Y-%m-%d")
+             yesterday_count = await db.max_min_entries.count_documents({"date": yesterday_str})
+             
+             if yesterday_count == 0:
+                 max_min_status["missing_dates"] = [yesterday_str, today_str]
+
+        return {
+            "line_losses": line_losses_status,
+            "energy_consumption": energy_status,
+            "max_min": max_min_status
+        }
+
+    except Exception as e:
+        print(f"Error checking daily status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 app.include_router(api_router)
 
 logging.basicConfig(

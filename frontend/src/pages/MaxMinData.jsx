@@ -72,11 +72,26 @@ export default function MaxMinData() {
   const [ictEntries, setIctEntries] = useState({});
   const [importPreviewOpen, setImportPreviewOpen] = useState(false);
   const [importData, setImportData] = useState([]);
+  const [dailyStatus, setDailyStatus] = useState(null);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
     initializeModule();
+    fetchDailyStatus();
   }, []);
+
+  const fetchDailyStatus = async () => {
+    try {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+        const response = await axios.get(`${API}/daily-status`, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        setDailyStatus(response.data.max_min);
+    } catch (e) {
+        console.error("Failed to fetch daily status", e);
+    }
+  };
 
   const initializeModule = async () => {
     try {
@@ -250,6 +265,7 @@ export default function MaxMinData() {
       }
       setEntries(newEntries.sort((a, b) => a.date.localeCompare(b.date)));
       setEditingEntry(null);
+      fetchDailyStatus();
     } catch (error) {
       console.error('Failed to save entry:', error);
       toast.error('Failed to save data');
@@ -263,6 +279,7 @@ export default function MaxMinData() {
       await axios.delete(`${API}/max-min/entries/${entryId}`);
       setEntries(entries.filter(e => e.id !== entryId));
       toast.success('Entry deleted');
+      fetchDailyStatus();
     } catch (error) {
       console.error('Failed to delete entry:', error);
       toast.error('Failed to delete entry');
@@ -340,6 +357,7 @@ export default function MaxMinData() {
       toast.success('Data imported successfully');
       setImportPreviewOpen(false);
       fetchEntries(selectedFeeder.id, year, month);
+      fetchDailyStatus();
     } catch (error) {
       console.error('Import failed:', error);
       toast.error('Failed to import data');
@@ -446,15 +464,22 @@ export default function MaxMinData() {
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 bg-white dark:bg-slate-950 p-6 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800">
         <div className="flex w-full justify-between items-start lg:w-auto lg:block">
           <div>
-            <h1 className="text-3xl md:text-4xl font-heading font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600">
-              Max Min Data
-            </h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-3xl md:text-4xl font-heading font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600">
+                Max Min Data
+              </h1>
+              {dailyStatus?.complete && (
+                  <span className="text-sm font-medium text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/30 px-2 py-1 rounded-md border border-green-200 dark:border-green-800 animate-in fade-in zoom-in duration-300">
+                    Data Updated Today
+                  </span>
+              )}
+            </div>
             <p className="text-sm md:text-base text-slate-500 font-medium mt-2 flex items-center gap-2">
               <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 ring-4 ring-emerald-50"></span>
               {monthNames[month - 1]} {year}
             </p>
           </div>
-          
+
           <div className="md:hidden">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

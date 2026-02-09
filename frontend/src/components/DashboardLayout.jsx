@@ -4,6 +4,7 @@ import { useTheme } from '@/components/ThemeProvider';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import ReminderBanner from './ReminderBanner';
+import DailyReminderBanner from './DailyReminderBanner';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -178,7 +179,10 @@ export default function DashboardLayout({ children }) {
               </button>
             </div>
 
-            <ReminderBanner />
+            <div className="flex-1 flex items-center overflow-hidden">
+              <ReminderBanner />
+              <DailyReminderBanner />
+            </div>
 
             <div className="flex items-center gap-3 ml-auto">
               <span className="text-sm font-medium text-slate-700 dark:text-slate-200 hidden md:inline-block">
