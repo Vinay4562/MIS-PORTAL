@@ -8,7 +8,8 @@ import DataEntryModal from '@/components/DataEntryModal';
 import ImportPreviewModal from '@/components/ImportPreviewModal';
 import FeederTable from '@/components/FeederTable';
 import AnalyticsCharts from '@/components/AnalyticsCharts';
-import { Download, Plus, Calendar, RefreshCcw, Upload, ChevronLeft, ChevronRight, MoreHorizontal } from 'lucide-react';
+import { Download, Plus, Calendar, RefreshCcw, Upload, ChevronLeft, ChevronRight, MoreHorizontal, FileText } from 'lucide-react';
+import { ReportPreviewModal } from '@/components/ReportPreviewModal';
 import { downloadFile } from '@/lib/utils';
 import { FullPageLoader } from '@/components/ui/loader';
 import {
@@ -53,6 +54,10 @@ export default function LineLosses() {
   const [importPreviewOpen, setImportPreviewOpen] = useState(false);
   const [importData, setImportData] = useState([]);
   const [dailyStatus, setDailyStatus] = useState(null);
+  const [showDailyReport, setShowDailyReport] = useState(false);
+  const [dailyReportData, setDailyReportData] = useState([]);
+  const [dailyReportRawDate, setDailyReportRawDate] = useState(null);
+  const [maxDailyDate, setMaxDailyDate] = useState(null);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -71,6 +76,121 @@ export default function LineLosses() {
     } catch (e) {
         console.error("Failed to fetch daily status", e);
     }
+  };
+
+  const fetchDailyReport = async (targetDate) => {
+    try {
+        setLoading(true);
+        const year = targetDate.getFullYear();
+        const month = String(targetDate.getMonth() + 1).padStart(2, '0');
+        const day = String(targetDate.getDate()).padStart(2, '0');
+        const dateStr = `${year}-${month}-${day}`;
+        
+        // Format date for display (e.g., 10 Feb 2026)
+        const formattedDate = targetDate.toLocaleDateString('en-GB', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric'
+        });
+        
+        // setDailyReportDate(formattedDate);
+        
+        const token = localStorage.getItem('token');
+        const response = await axios.get(`${API}/reports/line-losses/daily-preview/${dateStr}`, {
+             headers: { Authorization: `Bearer ${token}` }
+        });
+        
+        setDailyReportData(response.data);
+        setDailyReportRawDate(targetDate);
+        setShowDailyReport(true);
+        
+    } catch (error) {
+        console.error("Failed to load daily report:", error);
+        toast.error("Failed to load daily report");
+    } finally {
+        setLoading(false);
+    }
+  };
+
+  const handleDailyReport = async () => {
+    const currentDate = new Date();
+    // Reset hours to avoid time comparison issues
+    currentDate.setHours(0, 0, 0, 0);
+    
+    let targetDate;
+    
+    // Check if selected period matches current period (approximate check)
+    const currentYear = currentDate.getFullYear();
+    const currentMonth = currentDate.getMonth() + 1;
+    
+    if (year === currentYear && month === currentMonth) {
+        targetDate = new Date(currentDate);
+        // If today is NOT complete, use yesterday
+        if (dailyStatus && !dailyStatus.complete) {
+            targetDate.setDate(targetDate.getDate() - 1);
+        }
+    } else {
+        // For other months, start at the last day of that month
+        targetDate = new Date(year, month, 0);
+        targetDate.setHours(0, 0, 0, 0);
+        
+        // Ensure we don't go beyond "today/yesterday" even if selected month is current/future
+        // (Though usually selected month is past or current)
+        let absoluteMax = new Date(currentDate);
+        if (dailyStatus && !dailyStatus.complete) {
+            absoluteMax.setDate(absoluteMax.getDate() - 1);
+        }
+        
+        if (targetDate > absoluteMax) {
+            targetDate = absoluteMax;
+        }
+    }
+    
+    // Set max date allowed (absolute max based on data availability)
+    let absoluteMax = new Date(currentDate);
+    if (dailyStatus && !dailyStatus.complete) {
+        absoluteMax.setDate(absoluteMax.getDate() - 1);
+    }
+    setMaxDailyDate(absoluteMax);
+    
+    await fetchDailyReport(targetDate);
+  };
+  
+  const handlePrevDailyReport = () => {
+      if (!dailyReportRawDate) return;
+      const prevDate = new Date(dailyReportRawDate);
+      prevDate.setDate(prevDate.getDate() - 1);
+      
+      // Check boundaries of selected month
+      const startOfMonth = new Date(year, month - 1, 1);
+      startOfMonth.setHours(0, 0, 0, 0);
+      
+      if (prevDate < startOfMonth) {
+          toast.info("Please change the selected month to view previous reports.");
+          return;
+      }
+      
+      fetchDailyReport(prevDate);
+  };
+
+  const handleNextDailyReport = () => {
+      if (!dailyReportRawDate) return;
+      const nextDate = new Date(dailyReportRawDate);
+      nextDate.setDate(nextDate.getDate() + 1);
+      
+      // Check boundaries of selected month
+      const endOfMonth = new Date(year, month, 0);
+      endOfMonth.setHours(0, 0, 0, 0);
+      
+      if (nextDate > endOfMonth) {
+          toast.info("Please change the selected month to view future reports.");
+          return;
+      }
+      
+      // Prevent going beyond max date (absolute data limit)
+      if (maxDailyDate && nextDate > maxDailyDate) return;
+      
+      fetchDailyReport(nextDate);
   };
 
   const initializeFeeders = async () => {
@@ -450,48 +570,60 @@ export default function LineLosses() {
       </div>
 
       {/* Feeder Selection Dropdown */}
-      <div className="w-full max-w-xl mb-6">
-        <label className="text-sm font-medium mb-2 block text-slate-600 dark:text-slate-400">
-          Select Feeder
-        </label>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={goToPrevFeeder}
-            disabled={!selectedFeeder}
-            title="Previous Feeder"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </Button>
-          <Select
-            value={selectedFeeder?.id || ''}
-            onValueChange={(value) => {
-              const feeder = feeders.find(f => f.id === value);
-              if (feeder) handleFeederChange(feeder);
-            }}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="Select a feeder" />
-            </SelectTrigger>
-            <SelectContent className="max-h-[300px]">
-              {getSortedFeeders().map(feeder => (
-                <SelectItem key={feeder.id} value={feeder.id}>
-                  {feeder.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={goToNextFeeder}
-            disabled={!selectedFeeder}
-            title="Next Feeder"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </Button>
+      <div className="w-full mb-6 flex items-end justify-between">
+        <div className="w-full max-w-xl">
+          <label className="text-sm font-medium mb-2 block text-slate-600 dark:text-slate-400">
+            Select Feeder
+          </label>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={goToPrevFeeder}
+              disabled={!selectedFeeder}
+              title="Previous Feeder"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+            <Select
+              value={selectedFeeder?.id || ''}
+              onValueChange={(value) => {
+                const feeder = feeders.find(f => f.id === value);
+                if (feeder) handleFeederChange(feeder);
+              }}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select a feeder" />
+              </SelectTrigger>
+              <SelectContent className="max-h-[300px]">
+                {getSortedFeeders().map(feeder => (
+                  <SelectItem key={feeder.id} value={feeder.id}>
+                    {feeder.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={goToNextFeeder}
+              disabled={!selectedFeeder}
+              title="Next Feeder"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          </div>
         </div>
+  
+        <Button
+          variant="outline"
+          className="mr-[15px] gap-2"
+          onClick={handleDailyReport}
+          title="Daily Report"
+        >
+          <FileText className="w-4 h-4" />
+          <span className="hidden sm:inline">Daily Report</span>
+        </Button>
       </div>
 
       {/* Data Table */}
@@ -543,6 +675,25 @@ export default function LineLosses() {
           data={importData}
           onConfirm={handleImportConfirm}
           loading={loading}
+        />
+      )}
+
+      {/* Daily Report Preview Modal */}
+      {showDailyReport && (
+        <ReportPreviewModal
+          isOpen={showDailyReport}
+          onClose={() => setShowDailyReport(false)}
+          title="Line Losses"
+          subtitle={dailyReportRawDate ? dailyReportRawDate.toLocaleDateString('en-GB', {
+              day: 'numeric',
+              month: 'short',
+              year: 'numeric'
+          }) : ''}
+          data={dailyReportData}
+          loading={loading}
+          onPrev={handlePrevDailyReport}
+          onNext={handleNextDailyReport}
+          hasNext={dailyReportRawDate && maxDailyDate ? dailyReportRawDate < maxDailyDate : false}
         />
       )}
     </div>

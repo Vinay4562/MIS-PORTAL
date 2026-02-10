@@ -4,8 +4,9 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Download, Plus, Activity, Calendar, RefreshCcw, Upload, ChevronLeft, ChevronRight, MoreHorizontal } from 'lucide-react';
+import { Download, Plus, Activity, Calendar, RefreshCcw, Upload, ChevronLeft, ChevronRight, MoreHorizontal, FileText } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { ReportPreviewModal } from '@/components/ReportPreviewModal';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { downloadFile } from '@/lib/utils';
@@ -36,6 +37,10 @@ export default function EnergyConsumption() {
   const [importPreviewOpen, setImportPreviewOpen] = useState(false);
   const [importData, setImportData] = useState([]);
   const [dailyStatus, setDailyStatus] = useState(null);
+  const [showDailyReport, setShowDailyReport] = useState(false);
+  const [dailyReportData, setDailyReportData] = useState(null);
+  const [dailyReportRawDate, setDailyReportRawDate] = useState(null);
+  const [maxDailyDate, setMaxDailyDate] = useState(null);
 
   useEffect(() => {
     initializeModule();
@@ -67,6 +72,112 @@ export default function EnergyConsumption() {
       console.error('Failed to initialize energy module:', error);
       toast.error('Failed to load energy sheets');
     }
+  };
+
+  const fetchDailyReport = async (targetDate) => {
+    try {
+        setLoading(true);
+        const year = targetDate.getFullYear();
+        const month = String(targetDate.getMonth() + 1).padStart(2, '0');
+        const day = String(targetDate.getDate()).padStart(2, '0');
+        const dateStr = `${year}-${month}-${day}`;
+        
+        const token = localStorage.getItem('token');
+        const response = await axios.get(`${API}/reports/energy/daily-preview/${dateStr}`, {
+             headers: { Authorization: `Bearer ${token}` }
+        });
+        
+        setDailyReportData(response.data);
+        setDailyReportRawDate(targetDate);
+        setShowDailyReport(true);
+        
+    } catch (error) {
+        console.error("Failed to load daily report:", error);
+        toast.error("Failed to load daily report");
+    } finally {
+        setLoading(false);
+    }
+  };
+
+  const handleDailyReport = async () => {
+    const currentDate = new Date();
+    // Reset hours to avoid time comparison issues
+    currentDate.setHours(0, 0, 0, 0);
+    
+    let targetDate;
+    
+    // Check if selected period matches current period (approximate check)
+    const currentYear = currentDate.getFullYear();
+    const currentMonth = currentDate.getMonth() + 1;
+    
+    if (year === currentYear && month === currentMonth) {
+        targetDate = new Date(currentDate);
+        // If today is NOT complete, use yesterday
+        if (dailyStatus && !dailyStatus.complete) {
+            targetDate.setDate(targetDate.getDate() - 1);
+        }
+    } else {
+        // For other months, start at the last day of that month
+        targetDate = new Date(year, month, 0);
+        targetDate.setHours(0, 0, 0, 0);
+        
+        // Ensure we don't go beyond "today/yesterday" even if selected month is current/future
+        // (Though usually selected month is past or current)
+        let absoluteMax = new Date(currentDate);
+        if (dailyStatus && !dailyStatus.complete) {
+            absoluteMax.setDate(absoluteMax.getDate() - 1);
+        }
+        
+        if (targetDate > absoluteMax) {
+            targetDate = absoluteMax;
+        }
+    }
+    
+    // Set max date allowed (absolute max based on data availability)
+    let absoluteMax = new Date(currentDate);
+    if (dailyStatus && !dailyStatus.complete) {
+        absoluteMax.setDate(absoluteMax.getDate() - 1);
+    }
+    setMaxDailyDate(absoluteMax);
+    
+    await fetchDailyReport(targetDate);
+  };
+  
+  const handlePrevDailyReport = () => {
+      if (!dailyReportRawDate) return;
+      const prevDate = new Date(dailyReportRawDate);
+      prevDate.setDate(prevDate.getDate() - 1);
+      
+      // Check boundaries of selected month
+      const startOfMonth = new Date(year, month - 1, 1);
+      startOfMonth.setHours(0, 0, 0, 0);
+      
+      if (prevDate < startOfMonth) {
+          toast.info("Please change the selected month to view previous reports.");
+          return;
+      }
+      
+      fetchDailyReport(prevDate);
+  };
+
+  const handleNextDailyReport = () => {
+      if (!dailyReportRawDate) return;
+      const nextDate = new Date(dailyReportRawDate);
+      nextDate.setDate(nextDate.getDate() + 1);
+      
+      // Check boundaries of selected month
+      const endOfMonth = new Date(year, month, 0);
+      endOfMonth.setHours(0, 0, 0, 0);
+      
+      if (nextDate > endOfMonth) {
+          toast.info("Please change the selected month to view future reports.");
+          return;
+      }
+      
+      // Prevent going beyond max date (absolute data limit)
+      if (maxDailyDate && nextDate > maxDailyDate) return;
+      
+      fetchDailyReport(nextDate);
   };
 
   const handleSubmitDateSelection = () => {
@@ -313,6 +424,10 @@ export default function EnergyConsumption() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={handleDailyReport}>
+                    <FileText className="w-4 h-4 mr-2" />
+                    Daily Report
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={handleRefresh} disabled={!selectedSheet}>
                     <RefreshCcw className="w-4 h-4 mr-2" />
                     Refresh
@@ -413,48 +528,59 @@ export default function EnergyConsumption() {
       </div>
 
       {/* Sheet Selection */}
-      <div className="w-full max-w-xl mb-6">
-        <label className="text-sm font-medium mb-2 block text-slate-600 dark:text-slate-400">
-          Select Sheet
-        </label>
-        <div className="flex items-center gap-2">
-            <Button
-                variant="outline"
-                size="icon"
-                onClick={goToPrevSheet}
-                disabled={!selectedSheet}
-                title="Previous Sheet"
-            >
-                <ChevronLeft className="w-4 h-4" />
-            </Button>
-            <Select
-            value={selectedSheet?.id || ''}
-            onValueChange={(value) => {
-                const sheet = sheets.find(s => s.id === value);
-                if (sheet) handleSheetChange(sheet);
-            }}
-            >
-            <SelectTrigger>
-                <SelectValue placeholder="Select sheet" />
-            </SelectTrigger>
-            <SelectContent>
-                {sheets.map(sheet => (
-                <SelectItem key={sheet.id} value={sheet.id}>
-                    {sheet.name}
-                </SelectItem>
-                ))}
-            </SelectContent>
-            </Select>
-            <Button
-                variant="outline"
-                size="icon"
-                onClick={goToNextSheet}
-                disabled={!selectedSheet}
-                title="Next Sheet"
-            >
-                <ChevronRight className="w-4 h-4" />
-            </Button>
+      <div className="w-full flex items-end justify-between gap-4 mb-6">
+        <div className="w-full max-w-xl">
+            <label className="text-sm font-medium mb-2 block text-slate-600 dark:text-slate-400">
+            Select Sheet
+            </label>
+            <div className="flex items-center gap-2">
+                <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={goToPrevSheet}
+                    disabled={!selectedSheet}
+                    title="Previous Sheet"
+                >
+                    <ChevronLeft className="w-4 h-4" />
+                </Button>
+                <Select
+                value={selectedSheet?.id || ''}
+                onValueChange={(value) => {
+                    const sheet = sheets.find(s => s.id === value);
+                    if (sheet) handleSheetChange(sheet);
+                }}
+                >
+                <SelectTrigger>
+                    <SelectValue placeholder="Select sheet" />
+                </SelectTrigger>
+                <SelectContent>
+                    {sheets.map(sheet => (
+                    <SelectItem key={sheet.id} value={sheet.id}>
+                        {sheet.name}
+                    </SelectItem>
+                    ))}
+                </SelectContent>
+                </Select>
+                <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={goToNextSheet}
+                    disabled={!selectedSheet}
+                    title="Next Sheet"
+                >
+                    <ChevronRight className="w-4 h-4" />
+                </Button>
+            </div>
         </div>
+        
+        <Button 
+            variant="outline" 
+            onClick={handleDailyReport}
+            className="hidden md:flex"
+        >
+            <FileText className="w-4 h-4 mr-2" />
+            Daily Report
+        </Button>
       </div>
 
       {/* Data Table */}
@@ -558,6 +684,17 @@ export default function EnergyConsumption() {
           </DialogContent>
         </Dialog>
       )}
+
+      <ReportPreviewModal 
+        isOpen={showDailyReport}
+        onClose={() => setShowDailyReport(false)}
+        title="Energy Consumption Daily Report"
+        data={dailyReportData}
+        date={dailyReportRawDate}
+        onPrev={handlePrevDailyReport}
+        onNext={handleNextDailyReport}
+        hasNext={dailyReportRawDate && maxDailyDate && dailyReportRawDate < maxDailyDate}
+      />
     </div>
   );
 }

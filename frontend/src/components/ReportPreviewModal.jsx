@@ -16,7 +16,10 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BlockLoader } from "@/components/ui/loader";
 
-export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year, month }) {
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+
+export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year, month, subtitle, onPrev, onNext, hasNext, date }) {
   
   const renderContent = () => {
     if (loading) {
@@ -205,12 +208,12 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
         );
     }
 
-    if (title === "Fortnight") {
+    if (title === "Fortnight" || title === "Max-Min Daily Report") {
         if (!data || !data.periods) return <div className="text-center py-4">No data available</div>;
         
         return (
             <div className="w-full">
-                <Tabs defaultValue="1-15" className="w-full">
+                <Tabs defaultValue={data.periods[0]?.name || "1-15"} className="w-full">
                     <TabsList className="grid w-full grid-cols-3 mb-4">
                         {data.periods.map(p => (
                             <TabsTrigger key={p.name} value={p.name}>{p.name}</TabsTrigger>
@@ -309,6 +312,52 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                         </TabsContent>
                     ))}
                 </Tabs>
+            </div>
+        );
+    }
+
+    if (title === "Energy Consumption Daily Report") {
+        const { sheets } = data || {};
+        if (!sheets || sheets.length === 0) return <div className="text-center py-4">No data available</div>;
+
+        // Move 33KV sheets to the bottom
+        const otherSheets = sheets.filter(s => !s.name.toLowerCase().includes('33kv'));
+        const kvSheets = sheets.filter(s => s.name.toLowerCase().includes('33kv'));
+        const sortedSheets = [...otherSheets, ...kvSheets];
+
+        return (
+            <div className="space-y-8">
+                {sortedSheets.map((sheet, index) => (
+                    <div key={index} className="border rounded-md overflow-x-auto">
+                        <h3 className="font-bold p-2 bg-muted border-b">{sheet.name}</h3>
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead className="text-center border bg-muted h-auto py-2">Sl. No.</TableHead>
+                                    <TableHead className="text-center border bg-muted h-auto py-2">Meter Name</TableHead>
+                                    <TableHead className="text-center border bg-muted h-auto py-2">Initial</TableHead>
+                                    <TableHead className="text-center border bg-muted h-auto py-2">Final</TableHead>
+                                    <TableHead className="text-center border bg-muted h-auto py-2">MF</TableHead>
+                                    <TableHead className="text-center border bg-muted h-auto py-2">Consumption</TableHead>
+                                    <TableHead className="text-center border bg-muted h-auto py-2">Unit</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {sheet.meters.map((meter) => (
+                                    <TableRow key={meter.sl_no}>
+                                        <TableCell className="text-center border p-2">{meter.sl_no}</TableCell>
+                                        <TableCell className="border p-2 whitespace-nowrap">{meter.name}</TableCell>
+                                        <TableCell className="text-center border p-2">{meter.initial?.toFixed(2) ?? '-'}</TableCell>
+                                        <TableCell className="text-center border p-2">{meter.final?.toFixed(2) ?? '-'}</TableCell>
+                                        <TableCell className="text-center border p-2">{meter.mf}</TableCell>
+                                        <TableCell className="text-center border p-2 font-medium">{meter.consumption?.toFixed(2) ?? '-'}</TableCell>
+                                        <TableCell className="text-center border p-2">{meter.unit}</TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </div>
+                ))}
             </div>
         );
     }
@@ -560,7 +609,36 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-7xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{title} - {month}/{year}</DialogTitle>
+          <div className="flex items-center justify-between">
+            <DialogTitle>
+              {title} 
+              {date ? ` - ${date.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' })}` : 
+                (subtitle ? ` - ${subtitle}` : (month && year ? ` - ${month}/${year}` : ''))}
+            </DialogTitle>
+            
+            {onPrev && onNext && (
+              <div className="flex items-center gap-2 mr-8">
+                <Button 
+                  variant="outline" 
+                  size="icon" 
+                  onClick={onPrev}
+                  title="Previous Day"
+                  disabled={loading}
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="icon" 
+                  onClick={onNext}
+                  disabled={!hasNext || loading}
+                  title="Next Day"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+            )}
+          </div>
         </DialogHeader>
         {renderContent()}
       </DialogContent>

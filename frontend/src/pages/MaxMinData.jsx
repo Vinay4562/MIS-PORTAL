@@ -5,7 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
- import { Calendar, Download, Plus, Edit, Trash2, RefreshCcw, Upload, ChevronLeft, ChevronRight, MoreHorizontal } from 'lucide-react';
+ import { Download, Plus, Calendar, RefreshCcw, Upload, ChevronLeft, ChevronRight, MoreHorizontal, FileText, Edit, Trash2 } from 'lucide-react';
+import { ReportPreviewModal } from '@/components/ReportPreviewModal';
 import { formatDate, downloadFile } from '@/lib/utils';
 import MaxMinEntryModal from '@/components/MaxMinEntryModal';
 import MaxMinAnalytics from '@/components/MaxMinAnalytics';
@@ -73,6 +74,10 @@ export default function MaxMinData() {
   const [importPreviewOpen, setImportPreviewOpen] = useState(false);
   const [importData, setImportData] = useState([]);
   const [dailyStatus, setDailyStatus] = useState(null);
+  const [showDailyReport, setShowDailyReport] = useState(false);
+  const [dailyReportData, setDailyReportData] = useState([]);
+  const [dailyReportRawDate, setDailyReportRawDate] = useState(null);
+  const [maxDailyDate, setMaxDailyDate] = useState(null);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -91,6 +96,112 @@ export default function MaxMinData() {
     } catch (e) {
         console.error("Failed to fetch daily status", e);
     }
+  };
+
+  const fetchDailyReport = async (targetDate) => {
+    try {
+        setLoading(true);
+        const year = targetDate.getFullYear();
+        const month = String(targetDate.getMonth() + 1).padStart(2, '0');
+        const day = String(targetDate.getDate()).padStart(2, '0');
+        const dateStr = `${year}-${month}-${day}`;
+        
+        const token = localStorage.getItem('token');
+        const response = await axios.get(`${API}/reports/max-min/daily-preview/${dateStr}`, {
+             headers: { Authorization: `Bearer ${token}` }
+        });
+        
+        setDailyReportData(response.data);
+        setDailyReportRawDate(targetDate);
+        setShowDailyReport(true);
+        
+    } catch (error) {
+        console.error("Failed to load daily report:", error);
+        toast.error("Failed to load daily report");
+    } finally {
+        setLoading(false);
+    }
+  };
+
+  const handleDailyReport = async () => {
+    const currentDate = new Date();
+    // Reset hours to avoid time comparison issues
+    currentDate.setHours(0, 0, 0, 0);
+    
+    let targetDate;
+    
+    // Check if selected period matches current period (approximate check)
+    const currentYear = currentDate.getFullYear();
+    const currentMonth = currentDate.getMonth() + 1;
+    
+    if (year === currentYear && month === currentMonth) {
+        targetDate = new Date(currentDate);
+        // If today is NOT complete, use yesterday
+        if (dailyStatus && !dailyStatus.complete) {
+            targetDate.setDate(targetDate.getDate() - 1);
+        }
+    } else {
+        // For other months, start at the last day of that month
+        targetDate = new Date(year, month, 0);
+        targetDate.setHours(0, 0, 0, 0);
+        
+        // Ensure we don't go beyond "today/yesterday" even if selected month is current/future
+        // (Though usually selected month is past or current)
+        let absoluteMax = new Date(currentDate);
+        if (dailyStatus && !dailyStatus.complete) {
+            absoluteMax.setDate(absoluteMax.getDate() - 1);
+        }
+        
+        if (targetDate > absoluteMax) {
+            targetDate = absoluteMax;
+        }
+    }
+    
+    // Set max date allowed (absolute max based on data availability)
+    let absoluteMax = new Date(currentDate);
+    if (dailyStatus && !dailyStatus.complete) {
+        absoluteMax.setDate(absoluteMax.getDate() - 1);
+    }
+    setMaxDailyDate(absoluteMax);
+    
+    await fetchDailyReport(targetDate);
+  };
+  
+  const handlePrevDailyReport = () => {
+      if (!dailyReportRawDate) return;
+      const prevDate = new Date(dailyReportRawDate);
+      prevDate.setDate(prevDate.getDate() - 1);
+      
+      // Check boundaries of selected month
+      const startOfMonth = new Date(year, month - 1, 1);
+      startOfMonth.setHours(0, 0, 0, 0);
+      
+      if (prevDate < startOfMonth) {
+          toast.info("Please change the selected month to view previous reports.");
+          return;
+      }
+      
+      fetchDailyReport(prevDate);
+  };
+
+  const handleNextDailyReport = () => {
+      if (!dailyReportRawDate) return;
+      const nextDate = new Date(dailyReportRawDate);
+      nextDate.setDate(nextDate.getDate() + 1);
+      
+      // Check boundaries of selected month
+      const endOfMonth = new Date(year, month, 0);
+      endOfMonth.setHours(0, 0, 0, 0);
+      
+      if (nextDate > endOfMonth) {
+          toast.info("Please change the selected month to view future reports.");
+          return;
+      }
+      
+      // Prevent going beyond max date (absolute data limit)
+      if (maxDailyDate && nextDate > maxDailyDate) return;
+      
+      fetchDailyReport(nextDate);
   };
 
   const initializeModule = async () => {
@@ -592,7 +703,8 @@ export default function MaxMinData() {
       </div>
 
       {/* Feeder Selection */}
-      <Card className="w-full max-w-xl mb-8 border-0 shadow-md ring-1 ring-slate-100 overflow-hidden">
+      <div className="flex items-end justify-between mb-8">
+      <Card className="w-full max-w-xl border-0 shadow-md ring-1 ring-slate-100 overflow-hidden">
         <div className="h-1 w-full bg-gradient-to-r from-indigo-500 to-purple-500"></div>
         <CardContent className="pt-6 pb-6">
             <label className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-3 block flex items-center gap-2">
@@ -638,6 +750,17 @@ export default function MaxMinData() {
             </div>
         </CardContent>
       </Card>
+      
+      <Button
+          variant="outline"
+          className="mr-[15px] gap-2 h-10 mb-1"
+          onClick={handleDailyReport}
+          title="Daily Report"
+        >
+          <FileText className="w-4 h-4" />
+          <span className="hidden sm:inline">Daily Report</span>
+        </Button>
+      </div>
 
       {/* Data Table */}
       {selectedFeeder && (
@@ -805,6 +928,25 @@ export default function MaxMinData() {
             onNextFeeder={goToNextFeeder}
         />
       )}
+
+
+
+      {/* Daily Report Preview Modal */}
+      <ReportPreviewModal
+        isOpen={showDailyReport}
+        onClose={() => setShowDailyReport(false)}
+        title="Max-Min Daily Report"
+        subtitle={dailyReportRawDate ? dailyReportRawDate.toLocaleDateString('en-GB', {
+            day: 'numeric',
+            month: 'short',
+            year: 'numeric'
+        }) : ''}
+        data={dailyReportData}
+        loading={loading}
+        onPrev={handlePrevDailyReport}
+        onNext={handleNextDailyReport}
+        hasNext={dailyReportRawDate && maxDailyDate ? dailyReportRawDate < maxDailyDate : false}
+      />
     </div>
   );
 }

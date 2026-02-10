@@ -3995,17 +3995,38 @@ async def preview_fortnight_report(
                     "min_mw_time": format_time(stats.get('min_mw_time')),
                 })
 
-            # 3. Station Load
-            if bus_station_feeder:
-                f_entries = entries_by_feeder.get(bus_station_feeder['id'], [])
-                p_entries = [e for e in f_entries if p['start'] <= e['date'] <= p['end']]
-                stats = calculate_period_stats(p_entries, bus_station_feeder['type'])
+            # 3. Station Load (Calculated from ICTs Sum)
+            ict_feeders_data = period_data.get("ict_feeders", [])
+            
+            total_station_load = 0.0
+            station_load_time = '-'
+            station_load_date = '-'
+            valid_load_found = False
+            
+            for ict in ict_feeders_data:
+                mw_val = ict.get('max_mw')
                 
-                period_data["station_load"] = {
-                    "max_load": stats.get('max_load', '-'),
-                    "max_load_time": format_time(stats.get('max_load_time')),
-                    "max_load_date": format_date(stats.get('max_load_date'))
-                }
+                # Filter out invalid values
+                if mw_val == '-' or mw_val == -float('inf') or mw_val is None:
+                    continue
+                    
+                try:
+                    val = float(mw_val)
+                    total_station_load += val
+                    valid_load_found = True
+                    
+                    # Capture time from the first contributing ICT
+                    if station_load_time == '-' or station_load_time == '':
+                         station_load_time = ict.get('max_mw_time', '-')
+                         station_load_date = ict.get('max_mw_date', '-')
+                except (ValueError, TypeError):
+                    continue
+            
+            period_data["station_load"] = {
+                "max_load": round(total_station_load, 2) if valid_load_found else '-',
+                "max_load_time": station_load_time,
+                "max_load_date": station_load_date
+            }
                 
             preview_data["periods"].append(period_data)
 
@@ -4015,6 +4036,295 @@ async def preview_fortnight_report(
         error_msg = traceback.format_exc()
         print(error_msg)
         return JSONResponse(status_code=500, content={"detail": "Failed to generate Fortnight preview."})
+
+@api_router.get("/reports/max-min/daily-preview/{date_str}")
+async def preview_max_min_daily_report(
+    date_str: str,
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        # Validate date format
+        try:
+            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            return JSONResponse(status_code=400, content={"detail": "Invalid date format. Use YYYY-MM-DD"})
+
+        # Fetch all feeders
+        feeders = await db.max_min_feeders.find({}, {"_id": 0}).to_list(100)
+        
+        # Sort feeders based on predefined order (INCLUDING ICTs) - Same as Fortnight
+        FEEDER_ORDER = [
+            "Bus Voltages & Station Load",
+            "400KV MAHESHWARAM-2",
+            "400KV MAHESHWARAM-1",
+            "400KV NARSAPUR-1",
+            "400KV NARSAPUR-2",
+            "400KV KETHIREDDYPALLY-1",
+            "400KV KETHIREDDYPALLY-2",
+            "400KV NIZAMABAD-1",
+            "400KV NIZAMABAD-2",
+            "220KV PARIGI-1",
+            "220KV PARIGI-2",
+            "220KV THANDUR",
+            "220KV GACHIBOWLI-1",
+            "220KV GACHIBOWLI-2",
+            "220KV KETHIREDDYPALLY",
+            "220KV YEDDUMAILARAM-1",
+            "220KV YEDDUMAILARAM-2",
+            "220KV SADASIVAPET-1",
+            "220KV SADASIVAPET-2",
+            "ICT-1 (315MVA)",
+            "ICT-2 (315MVA)",
+            "ICT-3 (315MVA)",
+            "ICT-4 (500MVA)"
+        ]
+        
+        ordered_feeders = []
+        # Add Bus Station first
+        bus_feeder = next((x for x in feeders if x.get('type') == "bus_station"), None)
+        if bus_feeder:
+            ordered_feeders.append(bus_feeder)
+            
+        # Add others in order
+        for name in FEEDER_ORDER:
+            if bus_feeder and name == bus_feeder.get('name'): continue
+            f = next((x for x in feeders if x.get('name') == name), None)
+            if f:
+                ordered_feeders.append(f)
+                
+        # Helper to determine rating
+        def get_rating(name):
+            if "400KV" in name: return "400KV"
+            if "220KV" in name: return "220KV"
+            if "315MVA" in name: return "315MVA"
+            if "500MVA" in name: return "500MVA"
+            return "-"
+
+        # Split feeders
+        main_feeders = [f for f in ordered_feeders if f['type'] != 'ict_feeder' and f['type'] != 'bus_station']
+        ict_feeders = [f for f in ordered_feeders if f['type'] == 'ict_feeder']
+        bus_station_feeder = next((f for f in ordered_feeders if f['type'] == 'bus_station'), None)
+        if not bus_station_feeder:
+             bus_station_feeder = next((x for x in feeders if x.get('type') == "bus_station"), None)
+
+        # Single period for the day
+        periods = [
+            {"name": "Daily Details", "start": date_str, "end": date_str}
+        ]
+        
+        # Fetch entries for the specific date
+        all_entries = await db.max_min_entries.find(
+            {"date": date_str},
+            {"_id": 0}
+        ).to_list(10000)
+
+        entries_by_feeder = {}
+        for e in all_entries:
+            fid = e.get('feeder_id')
+            if fid:
+                if fid not in entries_by_feeder:
+                    entries_by_feeder[fid] = []
+                entries_by_feeder[fid].append(e)
+
+        preview_data = {"periods": []}
+
+        for p in periods:
+            period_data = {
+                "name": p['name'],
+                "main_feeders": [],
+                "ict_feeders": [],
+                "station_load": None
+            }
+            
+            # 1. Main Feeders
+            for i, feeder in enumerate(main_feeders, 1):
+                f_entries = entries_by_feeder.get(feeder['id'], [])
+                p_entries = f_entries # Already filtered by date
+                
+                # Check for Grouping Logic
+                is_special, partner_names = get_feeder_group_info(feeder['name'])
+                if is_special:
+                    p_group_map = {}
+                    p_group_map[feeder['id']] = p_entries
+                    
+                    # Gather partner entries
+                    for pname in partner_names:
+                         p_feeder = next((x for x in feeders if x['name'] == pname), None)
+                         if p_feeder:
+                             pf_entries = entries_by_feeder.get(p_feeder['id'], [])
+                             p_group_map[p_feeder['id']] = pf_entries
+                    
+                    leader_id = determine_leader(p_group_map)
+                    if not leader_id: leader_id = feeder['id']
+                    
+                    leader_entries = p_group_map.get(leader_id, [])
+                    stats = calculate_coincident_stats(leader_entries, feeder['id'], p_group_map, feeder['type'])
+                else:
+                    stats = calculate_period_stats(p_entries, feeder['type'])
+                
+                period_data["main_feeders"].append({
+                    "sl_no": i,
+                    "name": feeder['name'],
+                    "rating": get_rating(feeder['name']),
+                    "max_amps": stats.get('max_amps', '-'),
+                    "max_mw": stats.get('max_mw', '-'),
+                    "max_mw_date": format_date(stats.get('max_mw_date')),
+                    "max_mw_time": format_time(stats.get('max_mw_time')),
+                    "min_amps": stats.get('min_amps', '-'),
+                    "min_mw": stats.get('min_mw', '-'),
+                    "min_mw_date": format_date(stats.get('min_mw_date')),
+                    "min_mw_time": format_time(stats.get('min_mw_time')),
+                })
+                
+            # 2. ICT Feeders
+            start_sl = len(main_feeders) + 1
+            for i, feeder in enumerate(ict_feeders, start_sl):
+                f_entries = entries_by_feeder.get(feeder['id'], [])
+                p_entries = f_entries
+                
+                # Check for Grouping Logic
+                is_special, partner_names = get_feeder_group_info(feeder['name'])
+                if is_special:
+                    p_group_map = {}
+                    p_group_map[feeder['id']] = p_entries
+                    
+                    # Gather partner entries
+                    for pname in partner_names:
+                         p_feeder = next((x for x in feeders if x['name'] == pname), None)
+                         if p_feeder:
+                             pf_entries = entries_by_feeder.get(p_feeder['id'], [])
+                             p_group_map[p_feeder['id']] = pf_entries
+                    
+                    leader_id = determine_leader(p_group_map)
+                    if not leader_id: leader_id = feeder['id']
+                    
+                    leader_entries = p_group_map.get(leader_id, [])
+                    stats = calculate_coincident_stats(leader_entries, feeder['id'], p_group_map, feeder['type'])
+                else:
+                    stats = calculate_period_stats(p_entries, feeder['type'])
+                
+                period_data["ict_feeders"].append({
+                    "sl_no": i,
+                    "name": feeder['name'],
+                    "rating": get_rating(feeder['name']),
+                    "max_amps": stats.get('max_amps', '-'),
+                    "max_mw": stats.get('max_mw', '-'),
+                    "max_mw_date": format_date(stats.get('max_mw_date')),
+                    "max_mw_time": format_time(stats.get('max_mw_time')),
+                    "min_amps": stats.get('min_amps', '-'),
+                    "min_mw": stats.get('min_mw', '-'),
+                    "min_mw_date": format_date(stats.get('min_mw_date')),
+                    "min_mw_time": format_time(stats.get('min_mw_time')),
+                })
+
+            # 3. Station Load (Calculated from ICTs Sum)
+            ict_feeders_data = period_data.get("ict_feeders", [])
+            
+            total_station_load = 0.0
+            station_load_time = '-'
+            station_load_date = '-'
+            valid_load_found = False
+            
+            for ict in ict_feeders_data:
+                mw_val = ict.get('max_mw')
+                
+                # Filter out invalid values
+                if mw_val == '-' or mw_val == -float('inf') or mw_val is None:
+                    continue
+                    
+                try:
+                    val = float(mw_val)
+                    total_station_load += val
+                    valid_load_found = True
+                    
+                    # Capture time from the first contributing ICT
+                    if station_load_time == '-' or station_load_time == '':
+                         station_load_time = ict.get('max_mw_time', '-')
+                         station_load_date = ict.get('max_mw_date', '-')
+                except (ValueError, TypeError):
+                    continue
+            
+            period_data["station_load"] = {
+                "max_load": round(total_station_load, 2) if valid_load_found else '-',
+                "max_load_time": station_load_time,
+                "max_load_date": station_load_date
+            }
+                
+            preview_data["periods"].append(period_data)
+
+        return preview_data
+    except Exception as e:
+        import traceback
+        error_msg = traceback.format_exc()
+        print(error_msg)
+        return JSONResponse(status_code=500, content={"detail": "Failed to generate Daily preview."})
+
+@api_router.get("/reports/energy/daily-preview/{date_str}")
+async def preview_energy_daily_report(
+    date_str: str,
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        # Validate date format
+        try:
+            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            return JSONResponse(status_code=400, content={"detail": "Invalid date format. Use YYYY-MM-DD"})
+
+        # Fetch all sheets
+        sheets = await db.energy_sheets.find({}, {"_id": 0}).sort("name", 1).to_list(100)
+        
+        # Fetch all meters
+        all_meters = await db.energy_meters.find({}, {"_id": 0}).to_list(1000)
+        
+        # Fetch entries for the date
+        entries = await db.energy_entries.find(
+            {"date": date_str},
+            {"_id": 0}
+        ).to_list(1000)
+        
+        # Map entries by sheet_id
+        entries_by_sheet = {e['sheet_id']: e for e in entries}
+        
+        result_sheets = []
+        
+        for sheet in sheets:
+            sheet_meters = [m for m in all_meters if m.get('sheet_id') == sheet['id']]
+            # Sort meters by order if available, else by name
+            sheet_meters.sort(key=lambda x: x.get('order', 999))
+            
+            entry = entries_by_sheet.get(sheet['id'])
+            
+            meter_data = []
+            
+            readings_map = {}
+            if entry:
+                readings_map = {r['meter_id']: r for r in entry.get('readings', [])}
+                
+            for idx, meter in enumerate(sheet_meters, 1):
+                reading = readings_map.get(meter['id'])
+                meter_data.append({
+                    "sl_no": idx,
+                    "name": meter['name'],
+                    "initial": reading['initial'] if reading else None,
+                    "final": reading['final'] if reading else None,
+                    "mf": meter.get('mf', 1),
+                    "consumption": reading['consumption'] if reading else None,
+                    "unit": meter.get('unit', 'KWH')
+                })
+            
+            result_sheets.append({
+                "name": sheet['name'],
+                "meters": meter_data
+            })
+            
+        return {"sheets": result_sheets}
+        
+    except Exception as e:
+        import traceback
+        error_msg = traceback.format_exc()
+        print(error_msg)
+        return JSONResponse(status_code=500, content={"detail": "Failed to generate Energy Daily preview."})
 
 
 @api_router.get("/reports/daily-max-mva/preview/{year}/{month}")
@@ -5484,6 +5794,176 @@ async def get_line_losses_report_preview(
         with open("preview_error_log.txt", "w") as f:
             f.write(error_msg)
         print(error_msg)
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+@api_router.get("/reports/line-losses/daily-preview/{date_str}")
+async def get_line_losses_daily_report_preview(
+    date_str: str,
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        # 1. Get Feeders (Line Losses Module)
+        all_feeders = await db.feeders.find({}, {"_id": 0}).to_list(100)
+        
+        # Mapping DB Names to Report Names
+        FEEDER_MAPPING = {
+            "400 KV Shanakrapally-MHRM-2": "400KV MAHESHWARAM-2",
+            "400 KV Shanakrapally-MHRM-1": "400KV MAHESHWARAM-1",
+            "400 KV Shanakrapally-Narsapur-1": "400KV NARSAPUR-1",
+            "400 KV Shanakrapally-Narsapur-2": "400KV NARSAPUR-2",
+            "400 KV KethiReddyPally-1": "400KV KETHIREDDYPALLY-1",
+            "400 KV KethiReddyPally-2": "400KV KETHIREDDYPALLY-2",
+            "220 KV Parigi-1": "220KV PARIGI-1",
+            "220 KV Parigi-2": "220KV PARIGI-2",
+            "220 KV Tandur": "220KV THANDUR",
+            "220 KV Gachibowli-1": "220KV GACHIBOWLI-1",
+            "220 KV Gachibowli-2": "220KV GACHIBOWLI-2",
+            "220 KV KethiReddyPally": "220KV KETHIREDDYPALLY",
+            "220 KV Yeddumailaram-1": "220KV YEDDUMAILARAM-1",
+            "220 KV Yeddumailaram-2": "220KV YEDDUMAILARAM-2",
+            "220 KV Sadasivapet-1": "220KV SADASIVAPET-1",
+            "220 KV Sadasivapet-2": "220KV SADASIVAPET-2"
+        }
+
+        # Filter and Sort
+        FEEDER_ORDER = [
+            "400KV MAHESHWARAM-2",
+            "400KV MAHESHWARAM-1",
+            "400KV NARSAPUR-1",
+            "400KV NARSAPUR-2",
+            "400KV KETHIREDDYPALLY-1",
+            "400KV KETHIREDDYPALLY-2",
+            "220KV PARIGI-1",
+            "220KV PARIGI-2",
+            "220KV THANDUR",
+            "220KV GACHIBOWLI-1",
+            "220KV GACHIBOWLI-2",
+            "220KV KETHIREDDYPALLY",
+            "220KV YEDDUMAILARAM-1",
+            "220KV YEDDUMAILARAM-2",
+            "220KV SADASIVAPET-1",
+            "220KV SADASIVAPET-2"
+        ]
+        
+        target_feeders = []
+        for f in all_feeders:
+            if f['name'] in FEEDER_MAPPING:
+                f['display_name'] = FEEDER_MAPPING[f['name']]
+                target_feeders.append(f)
+        
+        target_feeders.sort(key=lambda x: FEEDER_ORDER.index(x['display_name']) if x['display_name'] in FEEDER_ORDER else 999)
+        
+        # 3. Get Entries
+        entries = await db.entries.find(
+            {"date": date_str},
+            {"_id": 0}
+        ).to_list(5000)
+        
+        entries_by_feeder = {}
+        for e in entries:
+            if e['feeder_id'] not in entries_by_feeder:
+                entries_by_feeder[e['feeder_id']] = []
+            entries_by_feeder[e['feeder_id']].append(e)
+            
+        # 4. Build Data
+        report_data = []
+        for idx, f in enumerate(target_feeders):
+            f_entries = entries_by_feeder.get(f['id'], [])
+            
+            data = {
+                "sl_no": idx + 1,
+                "feeder_name": f['display_name'],
+                "shankarpally": {"import": {}, "export": {}},
+                "other_end": {"import": {}, "export": {}},
+                "stats": {}
+            }
+            
+            if f_entries:
+                # For daily report, we only have one entry per feeder (if it exists)
+                # But we treat it as first/last for consistency with calculation logic
+                entry = f_entries[0]
+                
+                # Shankarpally (End 1)
+                # Import
+                s_imp_init = entry.get('end1_import_initial', 0)
+                s_imp_final = entry.get('end1_import_final', 0)
+                s_imp_mf = f.get('end1_import_mf', 1)
+                s_imp_cons = (s_imp_final - s_imp_init) * s_imp_mf
+                
+                data["shankarpally"]["import"] = {
+                    "initial": s_imp_init,
+                    "final": s_imp_final,
+                    "mf": s_imp_mf,
+                    "consumption": s_imp_cons
+                }
+                
+                # Export
+                s_exp_init = entry.get('end1_export_initial', 0)
+                s_exp_final = entry.get('end1_export_final', 0)
+                s_exp_mf = f.get('end1_export_mf', 1)
+                s_exp_cons = (s_exp_final - s_exp_init) * s_exp_mf
+                
+                data["shankarpally"]["export"] = {
+                    "initial": s_exp_init,
+                    "final": s_exp_final,
+                    "mf": s_exp_mf,
+                    "consumption": s_exp_cons
+                }
+                
+                # Other End (End 2)
+                # Import
+                o_imp_init = entry.get('end2_import_initial', 0)
+                o_imp_final = entry.get('end2_import_final', 0)
+                o_imp_mf = f.get('end2_import_mf', 1)
+                o_imp_cons = (o_imp_final - o_imp_init) * o_imp_mf
+                
+                data["other_end"]["import"] = {
+                    "initial": o_imp_init,
+                    "final": o_imp_final,
+                    "mf": o_imp_mf,
+                    "consumption": o_imp_cons
+                }
+                
+                # Export
+                o_exp_init = entry.get('end2_export_initial', 0)
+                o_exp_final = entry.get('end2_export_final', 0)
+                o_exp_mf = f.get('end2_export_mf', 1)
+                o_exp_cons = (o_exp_final - o_exp_init) * o_exp_mf
+                
+                data["other_end"]["export"] = {
+                    "initial": o_exp_init,
+                    "final": o_exp_final,
+                    "mf": o_exp_mf,
+                    "consumption": o_exp_cons
+                }
+                
+                # Calculate Losses
+                # Q = (D+L-H-P)/(D+L)
+                D = s_imp_cons
+                L = o_imp_cons
+                H = s_exp_cons
+                P = o_exp_cons
+                
+                numerator = (D + L) - (H + P)
+                denominator = (D + L)
+                
+                pct_loss = (numerator / denominator * 100) if denominator != 0 else 0
+                
+                data["stats"]["pct_loss"] = pct_loss
+                
+            else:
+                # No data
+                for end in ["shankarpally", "other_end"]:
+                    for type_ in ["import", "export"]:
+                        data[end][type_] = {"initial": 0, "final": 0, "mf": 0, "consumption": 0}
+                data["stats"]["pct_loss"] = 0
+                
+            report_data.append(data)
+            
+        return report_data
+        
+    except Exception as e:
+        print(f"Error in daily report preview: {str(e)}")
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
 async def _generate_line_losses_report_wb(year: int, month: int):
