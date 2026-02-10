@@ -549,7 +549,7 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                             {[1, 2, 3, 4].map((_, groupIdx) => (
                                 <React.Fragment key={groupIdx}>
                                     <TableHead className="text-center border bg-muted h-auto py-2 min-w-[80px]">Initial</TableHead>
-                                    <TableHead className="text-center border bg-muted h-auto py-2 min-w-[80px]">Final</TableHead>
+                                    <TableHead className="text-center border bg-yellow-100 h-auto py-2 min-w-[80px]">Final</TableHead>
                                     <TableHead className="text-center border bg-muted h-auto py-2 min-w-[50px]">MF</TableHead>
                                     <TableHead className="text-center border bg-muted h-auto py-2 min-w-[80px]">Cons.</TableHead>
                                 </React.Fragment>
@@ -565,25 +565,25 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                                     
                                     {/* Shankarpally Import */}
                                     <TableCell className="text-center border p-2">{row.shankarpally.import.initial}</TableCell>
-                                    <TableCell className="text-center border p-2">{row.shankarpally.import.final}</TableCell>
+                                    <TableCell className="text-center border p-2 bg-yellow-50">{row.shankarpally.import.final}</TableCell>
                                     <TableCell className="text-center border p-2">{row.shankarpally.import.mf}</TableCell>
                                     <TableCell className="text-center border p-2 font-medium">{row.shankarpally.import.consumption?.toFixed(2)}</TableCell>
                                     
                                     {/* Shankarpally Export */}
                                     <TableCell className="text-center border p-2">{row.shankarpally.export.initial}</TableCell>
-                                    <TableCell className="text-center border p-2">{row.shankarpally.export.final}</TableCell>
+                                    <TableCell className="text-center border p-2 bg-yellow-50">{row.shankarpally.export.final}</TableCell>
                                     <TableCell className="text-center border p-2">{row.shankarpally.export.mf}</TableCell>
                                     <TableCell className="text-center border p-2 font-medium">{row.shankarpally.export.consumption?.toFixed(2)}</TableCell>
                                     
                                     {/* Other End Import */}
                                     <TableCell className="text-center border p-2">{row.other_end.import.initial}</TableCell>
-                                    <TableCell className="text-center border p-2">{row.other_end.import.final}</TableCell>
+                                    <TableCell className="text-center border p-2 bg-yellow-50">{row.other_end.import.final}</TableCell>
                                     <TableCell className="text-center border p-2">{row.other_end.import.mf}</TableCell>
                                     <TableCell className="text-center border p-2 font-medium">{row.other_end.import.consumption?.toFixed(2)}</TableCell>
                                     
                                     {/* Other End Export */}
                                     <TableCell className="text-center border p-2">{row.other_end.export.initial}</TableCell>
-                                    <TableCell className="text-center border p-2">{row.other_end.export.final}</TableCell>
+                                    <TableCell className="text-center border p-2 bg-yellow-50">{row.other_end.export.final}</TableCell>
                                     <TableCell className="text-center border p-2">{row.other_end.export.mf}</TableCell>
                                     <TableCell className="text-center border p-2 font-medium">{row.other_end.export.consumption?.toFixed(2)}</TableCell>
                                     

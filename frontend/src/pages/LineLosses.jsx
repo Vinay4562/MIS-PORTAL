@@ -22,10 +22,10 @@ import {
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const FEEDER_ORDER = [
-  "400 KV Shanakrapally-MHRM-2",
-  "400 KV Shanakrapally-MHRM-1",
-  "400 KV Shanakrapally-Narsapur-1",
-  "400 KV Shanakrapally-Narsapur-2",
+  "400 KV Shankarpally-MHRM-2",
+  "400 KV Shankarpally-MHRM-1",
+  "400 KV Shankarpally-Narsapur-1",
+  "400 KV Shankarpally-Narsapur-2",
   "400 KV KethiReddyPally-1",
   "400 KV KethiReddyPally-2",
   "400 KV Nizamabad-1&2",

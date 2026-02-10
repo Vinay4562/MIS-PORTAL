@@ -2946,9 +2946,9 @@ async def initialize_feeders(current_user: User = Depends(get_current_user)):
         return {"message": "Feeders already initialized", "count": existing_count}
     
     feeders_data = [
-        {"name": "400 KV Shanakrapally-Narsapur-1", "end1": "Shankarapally", "end2": "Narsapur", "mf": [0.2, 0.2, 1, 1]},
-        {"name": "400 KV Shanakrapally-MHRM-2", "end1": "Shankarapally", "end2": "Maheshwaram-2", "mf": [0.2, 0.2, 1, 1]},
-        {"name": "400 KV Shanakrapally-MHRM-1", "end1": "Shankarapally", "end2": "Maheshwaram-1", "mf": [0.2, 0.2, 1, 1]},
+        {"name": "400 KV Shankarpally-Narsapur-1", "end1": "Shankarapally", "end2": "Narsapur", "mf": [0.2, 0.2, 1, 1]},
+        {"name": "400 KV Shankarpally-MHRM-2", "end1": "Shankarapally", "end2": "Maheshwaram-2", "mf": [0.2, 0.2, 1, 1]},
+        {"name": "400 KV Shankarpally-MHRM-1", "end1": "Shankarapally", "end2": "Maheshwaram-1", "mf": [0.2, 0.2, 1, 1]},
         {"name": "220 KV Sadasivapet-1", "end1": "Shankarapally", "end2": "Sadasivapet", "mf": [1, 1, 1.6, 1.6]},
         {"name": "220 KV Sadasivapet-2", "end1": "Shankarapally", "end2": "Sadasivapet", "mf": [1, 1, 1.6, 1.6]},
         {"name": "220 KV Parigi-1", "end1": "Shankarapally", "end2": "Parigi", "mf": [1, 1, 1, 1]},
@@ -2960,7 +2960,7 @@ async def initialize_feeders(current_user: User = Depends(get_current_user)):
         {"name": "400 KV KethiReddyPally-1", "end1": "Shankarapally", "end2": "KethiReddyPally", "mf": [1, 1, 1, 1]},
         {"name": "220 KV Yeddumailaram-1", "end1": "Shankarapally", "end2": "Yeddumailaram", "mf": [1, 1, 1, 1]},
         {"name": "220 KV Yeddumailaram-2", "end1": "Shankarapally", "end2": "Yeddumailaram", "mf": [1, 1, 1, 1]},
-        {"name": "400 KV Shanakrapally-Narsapur-2", "end1": "Shankarapally", "end2": "Narsapur", "mf": [0.2, 0.2, 1, 1]},
+        {"name": "400 KV Shankarpally-Narsapur-2", "end1": "Shankarapally", "end2": "Narsapur", "mf": [0.2, 0.2, 1, 1]},
         {"name": "400 KV Nizamabad-1&2", "end1": "Shankarapally", "end2": "Nizamabad", "mf": [1000, 1000, 1000, 1000]},
         {"name": "400 KV KethiReddyPally-2", "end1": "Shankarapally", "end2": "KethiReddyPally", "mf": [1, 1, 1, 1]}
     ]
@@ -5632,12 +5632,13 @@ async def get_line_losses_report_preview(
         
         # Mapping DB Names to Report Names
         FEEDER_MAPPING = {
-            "400 KV Shanakrapally-MHRM-2": "400KV MAHESHWARAM-2",
-            "400 KV Shanakrapally-MHRM-1": "400KV MAHESHWARAM-1",
-            "400 KV Shanakrapally-Narsapur-1": "400KV NARSAPUR-1",
-            "400 KV Shanakrapally-Narsapur-2": "400KV NARSAPUR-2",
+            "400 KV Shankarpally-MHRM-2": "400KV MAHESHWARAM-2",
+            "400 KV Shankarpally-MHRM-1": "400KV MAHESHWARAM-1",
+            "400 KV Shankarpally-Narsapur-1": "400KV NARSAPUR-1",
+            "400 KV Shankarpally-Narsapur-2": "400KV NARSAPUR-2",
             "400 KV KethiReddyPally-1": "400KV KETHIREDDYPALLY-1",
             "400 KV KethiReddyPally-2": "400KV KETHIREDDYPALLY-2",
+            "400 KV Nizamabad-1&2": "400KV NIZAMABAD-1 & 2",
             "220 KV Parigi-1": "220KV PARIGI-1",
             "220 KV Parigi-2": "220KV PARIGI-2",
             "220 KV Tandur": "220KV THANDUR",
@@ -5658,6 +5659,7 @@ async def get_line_losses_report_preview(
             "400KV NARSAPUR-2",
             "400KV KETHIREDDYPALLY-1",
             "400KV KETHIREDDYPALLY-2",
+            "400KV NIZAMABAD-1 & 2",
             "220KV PARIGI-1",
             "220KV PARIGI-2",
             "220KV THANDUR",
@@ -5807,12 +5809,13 @@ async def get_line_losses_daily_report_preview(
         
         # Mapping DB Names to Report Names
         FEEDER_MAPPING = {
-            "400 KV Shanakrapally-MHRM-2": "400KV MAHESHWARAM-2",
-            "400 KV Shanakrapally-MHRM-1": "400KV MAHESHWARAM-1",
-            "400 KV Shanakrapally-Narsapur-1": "400KV NARSAPUR-1",
-            "400 KV Shanakrapally-Narsapur-2": "400KV NARSAPUR-2",
+            "400 KV Shankarpally-MHRM-2": "400KV MAHESHWARAM-2",
+            "400 KV Shankarpally-MHRM-1": "400KV MAHESHWARAM-1",
+            "400 KV Shankarpally-Narsapur-1": "400KV NARSAPUR-1",
+            "400 KV Shankarpally-Narsapur-2": "400KV NARSAPUR-2",
             "400 KV KethiReddyPally-1": "400KV KETHIREDDYPALLY-1",
             "400 KV KethiReddyPally-2": "400KV KETHIREDDYPALLY-2",
+            "400 KV Nizamabad-1&2": "400KV NIZAMABAD-1 & 2",
             "220 KV Parigi-1": "220KV PARIGI-1",
             "220 KV Parigi-2": "220KV PARIGI-2",
             "220 KV Tandur": "220KV THANDUR",
@@ -5833,6 +5836,7 @@ async def get_line_losses_daily_report_preview(
             "400KV NARSAPUR-2",
             "400KV KETHIREDDYPALLY-1",
             "400KV KETHIREDDYPALLY-2",
+            "400KV NIZAMABAD-1 & 2",
             "220KV PARIGI-1",
             "220KV PARIGI-2",
             "220KV THANDUR",
@@ -6060,12 +6064,13 @@ async def _generate_line_losses_report_wb(year: int, month: int):
     all_feeders = await db.feeders.find({}, {"_id": 0}).to_list(100)
     
     FEEDER_MAPPING = {
-        "400 KV Shanakrapally-MHRM-2": "400KV MAHESHWARAM-2",
-        "400 KV Shanakrapally-MHRM-1": "400KV MAHESHWARAM-1",
-        "400 KV Shanakrapally-Narsapur-1": "400KV NARSAPUR-1",
-        "400 KV Shanakrapally-Narsapur-2": "400KV NARSAPUR-2",
+        "400 KV Shankarpally-MHRM-2": "400KV MAHESHWARAM-2",
+        "400 KV Shankarpally-MHRM-1": "400KV MAHESHWARAM-1",
+        "400 KV Shankarpally-Narsapur-1": "400KV NARSAPUR-1",
+        "400 KV Shankarpally-Narsapur-2": "400KV NARSAPUR-2",
         "400 KV KethiReddyPally-1": "400KV KETHIREDDYPALLY-1",
         "400 KV KethiReddyPally-2": "400KV KETHIREDDYPALLY-2",
+        "400 KV Nizamabad-1&2": "400KV NIZAMABAD-1 & 2",
         "220 KV Parigi-1": "220KV PARIGI-1",
         "220 KV Parigi-2": "220KV PARIGI-2",
         "220 KV Tandur": "220KV THANDUR",
@@ -6080,7 +6085,7 @@ async def _generate_line_losses_report_wb(year: int, month: int):
 
     FEEDER_ORDER = [
         "400KV MAHESHWARAM-2", "400KV MAHESHWARAM-1", "400KV NARSAPUR-1", "400KV NARSAPUR-2",
-        "400KV KETHIREDDYPALLY-1", "400KV KETHIREDDYPALLY-2", "220KV PARIGI-1", "220KV PARIGI-2",
+        "400KV KETHIREDDYPALLY-1", "400KV KETHIREDDYPALLY-2", "400KV NIZAMABAD-1 & 2", "220KV PARIGI-1", "220KV PARIGI-2",
         "220KV THANDUR", "220KV GACHIBOWLI-1", "220KV GACHIBOWLI-2", "220KV KETHIREDDYPALLY",
         "220KV YEDDUMAILARAM-1", "220KV YEDDUMAILARAM-2", "220KV SADASIVAPET-1", "220KV SADASIVAPET-2"
     ]
