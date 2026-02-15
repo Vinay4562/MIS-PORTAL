@@ -7,6 +7,40 @@ import { toast } from 'sonner';
 import { Edit, Calendar, Ban, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Loader } from "@/components/ui/loader";
 
+const TIME_PATTERN = "^([01]\\d|2[0-3]):[0-5]\\d$";
+
+const normalizeTimeValue = (value) => {
+  if (!value) return '';
+  const s = String(value).trim();
+  if (s === 'N/S' || s === '-') return s;
+  const upper = s.toUpperCase();
+  const match12h = upper.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AP]M)$/);
+  if (match12h) {
+    let hour = parseInt(match12h[1], 10);
+    const minute = match12h[2];
+    const period = match12h[4];
+    if (period === 'PM' && hour !== 12) {
+      hour += 12;
+    }
+    if (period === 'AM' && hour === 12) {
+      hour = 0;
+    }
+    return `${String(hour).padStart(2, '0')}:${minute}`;
+  }
+  if (s.includes(':')) {
+    const parts = s.split(':');
+    if (parts.length >= 2 && /^\d+$/.test(parts[0])) {
+      const hour = String(parseInt(parts[0], 10)).padStart(2, '0');
+      const minutePart = parts[1].slice(0, 2);
+      if (/^\d+$/.test(minutePart)) {
+        const minute = minutePart.padStart(2, '0');
+        return `${hour}:${minute}`;
+      }
+    }
+  }
+  return s;
+};
+
 export default function MaxMinEntryModal({ isOpen, onClose, onSave, feeder, year, month, initialData, defaultDate, onPrevFeeder, onNextFeeder, entries }) {
   const [formData, setFormData] = useState({});
   const [selectedDate, setSelectedDate] = useState('');
@@ -186,8 +220,9 @@ export default function MaxMinEntryModal({ isOpen, onClose, onSave, feeder, year
   };
 
   const renderTimeField = (label, path) => {
-    const val = getValue(path);
-    const isNS = val === 'N/S';
+    const rawVal = getValue(path);
+    const isNS = rawVal === 'N/S';
+    const val = isNS ? rawVal : normalizeTimeValue(rawVal);
     return (
     <div className="grid grid-cols-4 items-center gap-4">
       <Label htmlFor={path} className="text-right text-slate-600 font-medium">
@@ -195,9 +230,12 @@ export default function MaxMinEntryModal({ isOpen, onClose, onSave, feeder, year
       </Label>
       <Input
         id={path}
-        type={isNS ? "text" : "time"}
+        type="text"
+        inputMode="numeric"
+        pattern={TIME_PATTERN}
+        placeholder="HH:MM"
         value={val}
-        onChange={(e) => handleChange(path, e.target.value)}
+        onChange={(e) => handleChange(path, normalizeTimeValue(e.target.value))}
         className={`col-span-3 border-slate-200 focus:ring-2 focus:ring-indigo-500/20 ${isNS ? 'bg-slate-50 text-slate-500' : ''}`}
         disabled={isNS}
         required
@@ -208,18 +246,20 @@ export default function MaxMinEntryModal({ isOpen, onClose, onSave, feeder, year
  
   const getGroupTime = (kind) => {
     const explicit = getValue(`${kind}_bus_voltage.time`);
-    if (explicit) return explicit;
-    return (
+    const raw =
+      explicit ||
       getValue(`${kind}_bus_voltage_400kv.time`) ||
       getValue(`${kind}_bus_voltage_220kv.time`) ||
-      ''
-    );
+      '';
+    if (raw === 'N/S') return raw;
+    return normalizeTimeValue(raw);
   };
  
   const setGroupTime = (kind, value) => {
-    handleChange(`${kind}_bus_voltage.time`, value);
-    handleChange(`${kind}_bus_voltage_400kv.time`, value);
-    handleChange(`${kind}_bus_voltage_220kv.time`, value);
+    const v = normalizeTimeValue(value);
+    handleChange(`${kind}_bus_voltage.time`, v);
+    handleChange(`${kind}_bus_voltage_400kv.time`, v);
+    handleChange(`${kind}_bus_voltage_220kv.time`, v);
   };
 
   return (
@@ -319,7 +359,10 @@ export default function MaxMinEntryModal({ isOpen, onClose, onSave, feeder, year
                           </Label>
                           <Input
                             id="max_bus_voltage.time"
-                            type={getGroupTime('max') === 'N/S' ? 'text' : 'time'}
+                            type="text"
+                            inputMode="numeric"
+                            pattern={TIME_PATTERN}
+                            placeholder="HH:MM"
                             value={getGroupTime('max')}
                             onChange={(e) => setGroupTime('max', e.target.value)}
                             className={`col-span-3 border-slate-200 focus:ring-2 focus:ring-indigo-500/20 ${getGroupTime('max') === 'N/S' ? 'bg-slate-50 text-slate-500' : ''}`}
@@ -353,7 +396,10 @@ export default function MaxMinEntryModal({ isOpen, onClose, onSave, feeder, year
                           </Label>
                           <Input
                             id="min_bus_voltage.time"
-                            type={getGroupTime('min') === 'N/S' ? 'text' : 'time'}
+                            type="text"
+                            inputMode="numeric"
+                            pattern={TIME_PATTERN}
+                            placeholder="HH:MM"
                             value={getGroupTime('min')}
                             onChange={(e) => setGroupTime('min', e.target.value)}
                             className={`col-span-3 border-slate-200 focus:ring-2 focus:ring-indigo-500/20 ${getGroupTime('min') === 'N/S' ? 'bg-slate-50 text-slate-500' : ''}`}

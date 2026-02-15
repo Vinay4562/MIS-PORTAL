@@ -16,6 +16,7 @@ import jwt
 import io
 import smtplib
 import calendar
+import re
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
@@ -41,15 +42,28 @@ def format_date(date_str):
 def format_time(time_str):
     if not time_str:
         return ""
-    time_str = str(time_str).strip()
-    try:
-        if ':' in time_str:
-            parts = time_str.split(':')
-            if len(parts) >= 2:
-                return f"{parts[0].zfill(2)}:{parts[1].zfill(2)}"
-    except:
-        pass
-    return time_str
+    s = str(time_str).strip()
+    if s in ("-", "N/S"):
+        return s
+    upper = s.upper()
+    match_12h = re.match(r"^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AP]M)$", upper)
+    if match_12h:
+        hour = int(match_12h.group(1))
+        minute = match_12h.group(2)
+        period = match_12h.group(4)
+        if period == "PM" and hour != 12:
+            hour += 12
+        if period == "AM" and hour == 12:
+            hour = 0
+        return f"{hour:02d}:{minute}"
+    if ":" in s:
+        parts = s.split(":")
+        if len(parts) >= 2 and parts[0].isdigit():
+            minute_part = parts[1][:2]
+            if minute_part.isdigit():
+                hour = int(parts[0])
+                return f"{hour:02d}:{minute_part.zfill(2)}"
+    return s
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -2577,15 +2591,10 @@ async def export_max_min_data(
             except (ValueError, TypeError):
                 return None
                 
-        # Helper to format time (slice first 5 chars)
         def format_time_local(t):
             if not t:
                 return ''
-            s = str(t).strip()
-            # Truncate to hh:mm if it looks like a time string
-            if len(s) >= 5 and ':' in s:
-                return s[:5]
-            return s
+            return format_time(t)
 
         # Helper to calculate stats for a period
         def calculate_period_stats(period_entries, feeder_type):
@@ -4141,7 +4150,7 @@ async def preview_max_min_daily_report(
                 f_entries = entries_by_feeder.get(feeder['id'], [])
                 p_entries = f_entries # Already filtered by date
                 
-                # Check for Grouping Logic
+                # Restore original coincident grouping logic for double-circuit/ICT groups
                 is_special, partner_names = get_feeder_group_info(feeder['name'])
                 if is_special:
                     p_group_map = {}
@@ -4149,13 +4158,14 @@ async def preview_max_min_daily_report(
                     
                     # Gather partner entries
                     for pname in partner_names:
-                         p_feeder = next((x for x in feeders if x['name'] == pname), None)
-                         if p_feeder:
-                             pf_entries = entries_by_feeder.get(p_feeder['id'], [])
-                             p_group_map[p_feeder['id']] = pf_entries
+                        p_feeder = next((x for x in feeders if x['name'] == pname), None)
+                        if p_feeder:
+                            pf_entries = entries_by_feeder.get(p_feeder['id'], [])
+                            p_group_map[p_feeder['id']] = pf_entries
                     
                     leader_id = determine_leader(p_group_map)
-                    if not leader_id: leader_id = feeder['id']
+                    if not leader_id:
+                        leader_id = feeder['id']
                     
                     leader_entries = p_group_map.get(leader_id, [])
                     stats = calculate_coincident_stats(leader_entries, feeder['id'], p_group_map, feeder['type'])
@@ -4182,7 +4192,7 @@ async def preview_max_min_daily_report(
                 f_entries = entries_by_feeder.get(feeder['id'], [])
                 p_entries = f_entries
                 
-                # Check for Grouping Logic
+                # Restore original coincident grouping logic for ICT groups
                 is_special, partner_names = get_feeder_group_info(feeder['name'])
                 if is_special:
                     p_group_map = {}
@@ -4190,13 +4200,14 @@ async def preview_max_min_daily_report(
                     
                     # Gather partner entries
                     for pname in partner_names:
-                         p_feeder = next((x for x in feeders if x['name'] == pname), None)
-                         if p_feeder:
-                             pf_entries = entries_by_feeder.get(p_feeder['id'], [])
-                             p_group_map[p_feeder['id']] = pf_entries
+                        p_feeder = next((x for x in feeders if x['name'] == pname), None)
+                        if p_feeder:
+                            pf_entries = entries_by_feeder.get(p_feeder['id'], [])
+                            p_group_map[p_feeder['id']] = pf_entries
                     
                     leader_id = determine_leader(p_group_map)
-                    if not leader_id: leader_id = feeder['id']
+                    if not leader_id:
+                        leader_id = feeder['id']
                     
                     leader_entries = p_group_map.get(leader_id, [])
                     stats = calculate_coincident_stats(leader_entries, feeder['id'], p_group_map, feeder['type'])

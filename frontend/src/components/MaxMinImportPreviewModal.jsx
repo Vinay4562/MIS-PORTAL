@@ -5,18 +5,39 @@ import { Loader } from "@/components/ui/loader";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
  
-export default function MaxMinImportPreviewModal({ isOpen, onClose, data, feederType, onConfirm, loading }) {
-  const formatTime = (t) => {
-    if (!t) return '';
-    const str = String(t).trim();
-    if (str.includes(':')) {
-      const parts = str.split(':');
-      if (parts.length >= 2) {
-        return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}`;
+const formatTime = (t) => {
+  if (!t) return '';
+  const str = String(t).trim();
+  if (str === 'N/S' || str === '-') return str;
+  const upper = str.toUpperCase();
+  const match12h = upper.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AP]M)$/);
+  if (match12h) {
+    let hour = parseInt(match12h[1], 10);
+    const minute = match12h[2];
+    const period = match12h[4];
+    if (period === 'PM' && hour !== 12) {
+      hour += 12;
+    }
+    if (period === 'AM' && hour === 12) {
+      hour = 0;
+    }
+    return `${String(hour).padStart(2, '0')}:${minute}`;
+  }
+  if (str.includes(':')) {
+    const parts = str.split(':');
+    if (parts.length >= 2 && /^\d+$/.test(parts[0])) {
+      const hour = String(parseInt(parts[0], 10)).padStart(2, '0');
+      const minutePart = parts[1].slice(0, 2);
+      if (/^\d+$/.test(minutePart)) {
+        const minute = minutePart.padStart(2, '0');
+        return `${hour}:${minute}`;
       }
     }
-    return str;
-  };
+  }
+  return str;
+};
+
+export default function MaxMinImportPreviewModal({ isOpen, onClose, data, feederType, onConfirm, loading }) {
 
   const renderHeaders = () => {
     if (feederType === 'bus_station') {
