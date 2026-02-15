@@ -19,7 +19,7 @@ import { BlockLoader } from "@/components/ui/loader";
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
-export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year, month, subtitle, onPrev, onNext, hasNext, date }) {
+export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year, month, subtitle, onPrev, onNext, hasNext, date, reportId }) {
   
   const renderContent = () => {
     if (loading) {
@@ -525,33 +525,155 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
         );
     }
 
+    if (title === "Line Losses" && reportId === "line-losses") {
+        const rows = Array.isArray(data) ? data : data?.lines || [];
 
-    if (title === "Line Losses") {
         return (
-            <div className="border rounded-md overflow-x-auto">
-                <Table>
+            <div className="border rounded-md max-w-full overflow-x-auto">
+                <Table className="w-full table-fixed text-xs min-w-[2000px]">
                     <TableHeader>
                         <TableRow>
-                            <TableHead rowSpan={3} className="text-center border bg-muted h-auto py-2">Sl. No.</TableHead>
-                            <TableHead rowSpan={3} className="text-center border bg-muted h-auto py-2 min-w-[200px]">Name of the Feeder</TableHead>
-                            <TableHead colSpan={8} className="text-center border bg-muted h-auto py-2">Shankarapally End</TableHead>
-                            <TableHead colSpan={8} className="text-center border bg-muted h-auto py-2">Other End</TableHead>
-                            <TableHead rowSpan={3} className="text-center border bg-muted h-auto py-2">% Losses</TableHead>
-                            <TableHead rowSpan={3} className="text-center border bg-muted h-auto py-2">Remarks</TableHead>
+                            <TableHead rowSpan={3} className="text-center border bg-muted h-auto py-1 w-[3%]">Sl. No.</TableHead>
+                            <TableHead rowSpan={3} className="text-center border bg-muted h-auto py-1 w-[10%] break-words">Name of the Feeder</TableHead>
+                            <TableHead colSpan={8} className="text-center border bg-muted h-auto py-1">Shankarapally End</TableHead>
+                            <TableHead colSpan={8} className="text-center border bg-muted h-auto py-1">Other End</TableHead>
+                            <TableHead rowSpan={3} className="text-center border bg-muted h-auto py-1 w-[6%]">% Losses</TableHead>
+                            <TableHead rowSpan={3} className="text-center border bg-muted h-auto py-1 w-[8%]">Remarks</TableHead>
                         </TableRow>
                         <TableRow>
-                            <TableHead colSpan={4} className="text-center border bg-muted h-auto py-2">Import</TableHead>
-                            <TableHead colSpan={4} className="text-center border bg-muted h-auto py-2">Export</TableHead>
-                            <TableHead colSpan={4} className="text-center border bg-muted h-auto py-2">Import</TableHead>
-                            <TableHead colSpan={4} className="text-center border bg-muted h-auto py-2">Export</TableHead>
+                            <TableHead colSpan={4} className="text-center border bg-muted h-auto py-1">Import</TableHead>
+                            <TableHead colSpan={4} className="text-center border bg-muted h-auto py-1">Export</TableHead>
+                            <TableHead colSpan={4} className="text-center border bg-muted h-auto py-1">Import</TableHead>
+                            <TableHead colSpan={4} className="text-center border bg-muted h-auto py-1">Export</TableHead>
                         </TableRow>
                         <TableRow>
                             {[1, 2, 3, 4].map((_, groupIdx) => (
                                 <React.Fragment key={groupIdx}>
-                                    <TableHead className="text-center border bg-muted h-auto py-2 min-w-[80px]">Initial</TableHead>
-                                    <TableHead className="text-center border bg-yellow-100 h-auto py-2 min-w-[80px]">Final</TableHead>
-                                    <TableHead className="text-center border bg-muted h-auto py-2 min-w-[50px]">MF</TableHead>
-                                    <TableHead className="text-center border bg-muted h-auto py-2 min-w-[80px]">Cons.</TableHead>
+                                    <TableHead className="text-center border bg-muted h-auto py-1">Initial</TableHead>
+                                    <TableHead className="text-center border bg-yellow-100 h-auto py-1">Final</TableHead>
+                                    <TableHead className="text-center border bg-muted h-auto py-1">MF</TableHead>
+                                    <TableHead className="text-center border bg-muted h-auto py-1">Cons.</TableHead>
+                                </React.Fragment>
+                            ))}
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {rows && rows.length > 0 ? (
+                            rows.map((row, index) => (
+                                <TableRow key={index}>
+                                    <TableCell className="text-center border px-2 py-2">
+                                        {row.sl_no ?? index + 1}
+                                    </TableCell>
+                                    <TableCell className="border px-2 py-2 break-words">
+                                        {row.feeder_name}
+                                    </TableCell>
+
+                                    <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
+                                        {row.shankarpally?.import?.initial}
+                                    </TableCell>
+                                    <TableCell className="text-right border px-2 py-2 bg-yellow-50 whitespace-nowrap">
+                                        {row.shankarpally?.import?.final}
+                                    </TableCell>
+                                    <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
+                                        {row.shankarpally?.import?.mf}
+                                    </TableCell>
+                                    <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">
+                                        {row.shankarpally?.import?.consumption != null
+                                            ? row.shankarpally.import.consumption.toFixed(2)
+                                            : ""}
+                                    </TableCell>
+
+                                    <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
+                                        {row.shankarpally?.export?.initial}
+                                    </TableCell>
+                                    <TableCell className="text-right border px-2 py-2 bg-yellow-50 whitespace-nowrap">
+                                        {row.shankarpally?.export?.final}
+                                    </TableCell>
+                                    <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
+                                        {row.shankarpally?.export?.mf}
+                                    </TableCell>
+                                    <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">
+                                        {row.shankarpally?.export?.consumption != null
+                                            ? row.shankarpally.export.consumption.toFixed(2)
+                                            : ""}
+                                    </TableCell>
+
+                                    <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
+                                        {row.other_end?.import?.initial}
+                                    </TableCell>
+                                    <TableCell className="text-right border px-2 py-2 bg-yellow-50 whitespace-nowrap">
+                                        {row.other_end?.import?.final}
+                                    </TableCell>
+                                    <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
+                                        {row.other_end?.import?.mf}
+                                    </TableCell>
+                                    <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">
+                                        {row.other_end?.import?.consumption != null
+                                            ? row.other_end.import.consumption.toFixed(2)
+                                            : ""}
+                                    </TableCell>
+
+                                    <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
+                                        {row.other_end?.export?.initial}
+                                    </TableCell>
+                                    <TableCell className="text-right border px-2 py-2 bg-yellow-50 whitespace-nowrap">
+                                        {row.other_end?.export?.final}
+                                    </TableCell>
+                                    <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
+                                        {row.other_end?.export?.mf}
+                                    </TableCell>
+                                    <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">
+                                        {row.other_end?.export?.consumption != null
+                                            ? row.other_end.export.consumption.toFixed(2)
+                                            : ""}
+                                    </TableCell>
+
+                                    <TableCell className="text-right border px-2 py-2 font-bold whitespace-nowrap">
+                                        {row.stats?.pct_loss != null
+                                            ? row.stats.pct_loss.toFixed(2)
+                                            : ""}
+                                    </TableCell>
+                                    <TableCell className="border px-2 py-2 break-words">
+                                        {row.remarks || ""}
+                                    </TableCell>
+                                </TableRow>
+                            ))
+                        ) : (
+                            <TableRow>
+                                <TableCell colSpan={20} className="text-center py-4">
+                                    No data available
+                                </TableCell>
+                            </TableRow>
+                        )}
+                    </TableBody>
+                </Table>
+            </div>
+        );
+    }
+
+    if (title === "Line Losses") {
+        return (
+            <div className="border rounded-md max-w-full overflow-y-auto">
+                <Table className="w-full table-fixed text-xs">
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead rowSpan={3} className="text-center border bg-muted h-auto py-1 w-[18%] break-words">Name of the Feeder</TableHead>
+                            <TableHead colSpan={6} className="text-center border bg-muted h-auto py-1 w-[38%]">Shankarapally End</TableHead>
+                            <TableHead colSpan={6} className="text-center border bg-muted h-auto py-1 w-[38%]">Other End</TableHead>
+                            <TableHead rowSpan={3} className="text-center border bg-muted h-auto py-1 w-[6%]">%</TableHead>
+                        </TableRow>
+                        <TableRow>
+                            <TableHead colSpan={3} className="text-center border bg-muted h-auto py-1">Import</TableHead>
+                            <TableHead colSpan={3} className="text-center border bg-muted h-auto py-1">Export</TableHead>
+                            <TableHead colSpan={3} className="text-center border bg-muted h-auto py-1">Import</TableHead>
+                            <TableHead colSpan={3} className="text-center border bg-muted h-auto py-1">Export</TableHead>
+                        </TableRow>
+                        <TableRow>
+                            {[1, 2, 3, 4].map((_, groupIdx) => (
+                                <React.Fragment key={groupIdx}>
+                                    <TableHead className="text-center border bg-muted h-auto py-1">Initial</TableHead>
+                                    <TableHead className="text-center border bg-yellow-100 h-auto py-1">Final</TableHead>
+                                    <TableHead className="text-center border bg-muted h-auto py-1">Cons.</TableHead>
                                 </React.Fragment>
                             ))}
                         </TableRow>
@@ -560,40 +682,34 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                         {data && data.length > 0 ? (
                             data.map((row, index) => (
                                 <TableRow key={index}>
-                                    <TableCell className="text-center border p-2">{row.sl_no}</TableCell>
-                                    <TableCell className="border p-2 whitespace-nowrap">{row.feeder_name}</TableCell>
+                                    <TableCell className="border px-2 py-2 break-words">{row.feeder_name}</TableCell>
                                     
                                     {/* Shankarpally Import */}
-                                    <TableCell className="text-center border p-2">{row.shankarpally.import.initial}</TableCell>
-                                    <TableCell className="text-center border p-2 bg-yellow-50">{row.shankarpally.import.final}</TableCell>
-                                    <TableCell className="text-center border p-2">{row.shankarpally.import.mf}</TableCell>
-                                    <TableCell className="text-center border p-2 font-medium">{row.shankarpally.import.consumption?.toFixed(2)}</TableCell>
+                                    <TableCell className="text-right border px-2 py-2 whitespace-nowrap">{row.shankarpally.import.initial}</TableCell>
+                                    <TableCell className="text-right border px-2 py-2 bg-yellow-50 whitespace-nowrap">{row.shankarpally.import.final}</TableCell>
+                                    <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">{row.shankarpally.import.consumption?.toFixed(2)}</TableCell>
                                     
                                     {/* Shankarpally Export */}
-                                    <TableCell className="text-center border p-2">{row.shankarpally.export.initial}</TableCell>
-                                    <TableCell className="text-center border p-2 bg-yellow-50">{row.shankarpally.export.final}</TableCell>
-                                    <TableCell className="text-center border p-2">{row.shankarpally.export.mf}</TableCell>
-                                    <TableCell className="text-center border p-2 font-medium">{row.shankarpally.export.consumption?.toFixed(2)}</TableCell>
+                                    <TableCell className="text-right border px-2 py-2 whitespace-nowrap">{row.shankarpally.export.initial}</TableCell>
+                                    <TableCell className="text-right border px-2 py-2 bg-yellow-50 whitespace-nowrap">{row.shankarpally.export.final}</TableCell>
+                                    <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">{row.shankarpally.export.consumption?.toFixed(2)}</TableCell>
                                     
                                     {/* Other End Import */}
-                                    <TableCell className="text-center border p-2">{row.other_end.import.initial}</TableCell>
-                                    <TableCell className="text-center border p-2 bg-yellow-50">{row.other_end.import.final}</TableCell>
-                                    <TableCell className="text-center border p-2">{row.other_end.import.mf}</TableCell>
-                                    <TableCell className="text-center border p-2 font-medium">{row.other_end.import.consumption?.toFixed(2)}</TableCell>
+                                    <TableCell className="text-right border px-2 py-2 whitespace-nowrap">{row.other_end.import.initial}</TableCell>
+                                    <TableCell className="text-right border px-2 py-2 bg-yellow-50 whitespace-nowrap">{row.other_end.import.final}</TableCell>
+                                    <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">{row.other_end.import.consumption?.toFixed(2)}</TableCell>
                                     
                                     {/* Other End Export */}
-                                    <TableCell className="text-center border p-2">{row.other_end.export.initial}</TableCell>
-                                    <TableCell className="text-center border p-2 bg-yellow-50">{row.other_end.export.final}</TableCell>
-                                    <TableCell className="text-center border p-2">{row.other_end.export.mf}</TableCell>
-                                    <TableCell className="text-center border p-2 font-medium">{row.other_end.export.consumption?.toFixed(2)}</TableCell>
+                                    <TableCell className="text-right border px-2 py-2 whitespace-nowrap">{row.other_end.export.initial}</TableCell>
+                                    <TableCell className="text-right border px-2 py-2 bg-yellow-50 whitespace-nowrap">{row.other_end.export.final}</TableCell>
+                                    <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">{row.other_end.export.consumption?.toFixed(2)}</TableCell>
                                     
-                                    <TableCell className="text-center border p-2 font-bold">{row.stats.pct_loss?.toFixed(2)}</TableCell>
-                                    <TableCell className="text-center border p-2">-</TableCell>
+                                    <TableCell className="text-right border px-2 py-2 font-bold whitespace-nowrap">{row.stats.pct_loss?.toFixed(2)}</TableCell>
                                 </TableRow>
                             ))
                         ) : (
                             <TableRow>
-                                <TableCell colSpan={20} className="text-center py-4">No data available</TableCell>
+                                <TableCell colSpan={14} className="text-center py-4">No data available</TableCell>
                             </TableRow>
                         )}
                     </TableBody>

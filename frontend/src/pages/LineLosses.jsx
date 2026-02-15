@@ -59,10 +59,25 @@ export default function LineLosses() {
   const [dailyReportRawDate, setDailyReportRawDate] = useState(null);
   const [maxDailyDate, setMaxDailyDate] = useState(null);
   const fileInputRef = useRef(null);
+  const [showStickyFeeder, setShowStickyFeeder] = useState(false);
+  const feederSelectorRef = useRef(null);
 
   useEffect(() => {
     initializeFeeders();
     fetchDailyStatus();
+  }, []);
+
+  useEffect(() => {
+    const main = document.querySelector('main');
+    if (!main) return;
+
+    const handleScroll = () => {
+      setShowStickyFeeder(main.scrollTop > 0);
+    };
+
+    handleScroll();
+    main.addEventListener('scroll', handleScroll);
+    return () => main.removeEventListener('scroll', handleScroll);
   }, []);
 
   const fetchDailyStatus = async () => {
@@ -243,6 +258,9 @@ export default function LineLosses() {
       const sorted = getSortedFeeders();
       setSelectedFeeder(sorted[0]);
       setShowDateSelector(false);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('collapse-sidebar'));
+      }
       fetchEntries(sorted[0].id, year, month);
     }
   };
@@ -271,6 +289,7 @@ export default function LineLosses() {
     setEntries([...entries, newEntry].sort((a, b) => a.date.localeCompare(b.date)));
     toast.success('Data Saved');
     fetchDailyStatus();
+    goToNextFeeder();
   };
 
   const handleEntryUpdated = (updatedEntry) => {
@@ -570,7 +589,7 @@ export default function LineLosses() {
       </div>
 
       {/* Feeder Selection Dropdown */}
-      <div className="w-full mb-6 flex items-end justify-between">
+      <div ref={feederSelectorRef} className="w-full mb-2 flex items-end justify-between">
         <div className="w-full max-w-xl">
           <label className="text-sm font-medium mb-2 block text-slate-600 dark:text-slate-400">
             Select Feeder
@@ -625,6 +644,14 @@ export default function LineLosses() {
           <span className="hidden sm:inline">Daily Report</span>
         </Button>
       </div>
+
+      {selectedFeeder && showStickyFeeder && (
+        <div className="sticky top-0 z-20 bg-white/95 border-y border-slate-200 py-2 mb-4">
+          <div className="text-sm font-semibold text-slate-700">
+            Viewing Feeder: <span className="font-bold">{selectedFeeder.name}</span>
+          </div>
+        </div>
+      )}
 
       {/* Data Table */}
       {selectedFeeder && (

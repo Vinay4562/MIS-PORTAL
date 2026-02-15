@@ -124,6 +124,9 @@ export default function Reports() {
 
   const handleSubmitDateSelection = () => {
     setShowDateSelector(false);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('collapse-sidebar'));
+    }
     fetchReportStatus(year, month);
   };
 
@@ -437,6 +440,7 @@ export default function Reports() {
             loading={previewLoading}
             year={year}
             month={month}
+            reportId={previewReport.id}
         />
       )}
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/components/ThemeProvider';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,15 @@ export default function DashboardLayout({ children }) {
   const location = useLocation();
   const [open, setOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
+
+  useEffect(() => {
+    const handler = () => {
+      setIsCollapsed(true);
+      setOpen(false);
+    };
+    window.addEventListener('collapse-sidebar', handler);
+    return () => window.removeEventListener('collapse-sidebar', handler);
+  }, []);
 
   const toggleTheme = () => {
     setTheme(theme === 'light' ? 'dark' : 'light');
@@ -210,7 +219,7 @@ export default function DashboardLayout({ children }) {
         </header>
 
         {/* Page Content */}
-        <main className="flex-1 overflow-y-auto p-4 md:p-6 flex flex-col">
+        <main className="flex-1 overflow-y-auto px-4 md:px-6 pb-4 md:pb-6 pt-0 flex flex-col">
           <div className="flex-1">
             {children}
           </div>

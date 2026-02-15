@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -41,10 +41,25 @@ export default function EnergyConsumption() {
   const [dailyReportData, setDailyReportData] = useState(null);
   const [dailyReportRawDate, setDailyReportRawDate] = useState(null);
   const [maxDailyDate, setMaxDailyDate] = useState(null);
+  const [showStickySheet, setShowStickySheet] = useState(false);
+  const sheetSelectorRef = useRef(null);
 
   useEffect(() => {
     initializeModule();
     fetchDailyStatus();
+  }, []);
+
+  useEffect(() => {
+    const main = document.querySelector('main');
+    if (!main) return;
+
+    const handleScroll = () => {
+      setShowStickySheet(main.scrollTop > 0);
+    };
+
+    handleScroll();
+    main.addEventListener('scroll', handleScroll);
+    return () => main.removeEventListener('scroll', handleScroll);
   }, []);
 
   const fetchDailyStatus = async () => {
@@ -182,13 +197,15 @@ export default function EnergyConsumption() {
 
   const handleSubmitDateSelection = () => {
     if (sheets.length > 0) {
-      // Default to first sheet if none selected, or keep existing
       const sheetToUse = selectedSheet || sheets[0];
       setSelectedSheet(sheetToUse);
       setShowDateSelector(false);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('collapse-sidebar'));
+      }
       fetchEntries(sheetToUse.id, year, month);
     } else {
-        toast.error("No sheets available");
+      toast.error("No sheets available");
     }
   };
 
@@ -263,10 +280,14 @@ export default function EnergyConsumption() {
   };
 
   const handleEntryCreated = (newEntry) => {
+    const isNewEntry = !editingEntry;
     fetchEntries(selectedSheet.id, year, month);
     toast.success('Data Saved');
     setEditingEntry(null);
     fetchDailyStatus();
+    if (isNewEntry) {
+      goToNextSheet();
+    }
   };
 
   const handleEdit = (entry) => {
@@ -528,7 +549,7 @@ export default function EnergyConsumption() {
       </div>
 
       {/* Sheet Selection */}
-      <div className="w-full flex items-end justify-between gap-4 mb-6">
+      <div ref={sheetSelectorRef} className="w-full flex items-end justify-between gap-4 mb-2">
         <div className="w-full max-w-xl">
             <label className="text-sm font-medium mb-2 block text-slate-600 dark:text-slate-400">
             Select Sheet
@@ -582,6 +603,14 @@ export default function EnergyConsumption() {
             Daily Report
         </Button>
       </div>
+
+      {selectedSheet && showStickySheet && (
+        <div className="sticky top-0 z-20 bg-white/95 border-y border-slate-200 py-2 mb-4">
+          <div className="text-sm font-semibold text-slate-700">
+            Viewing Sheet: <span className="font-bold">{selectedSheet.name}</span>
+          </div>
+        </div>
+      )}
 
       {/* Data Table */}
       {selectedSheet && (
