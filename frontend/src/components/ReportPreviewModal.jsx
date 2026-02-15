@@ -653,8 +653,8 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
 
     if (title === "Line Losses") {
         return (
-            <div className="border rounded-md max-w-full overflow-y-auto">
-                <Table className="w-full table-fixed text-xs">
+            <div className="border rounded-md max-w-full overflow-x-auto">
+                <Table className="w-full table-fixed text-xs min-w-[1200px]">
                     <TableHeader>
                         <TableRow>
                             <TableHead rowSpan={3} className="text-center border bg-muted h-auto py-1 w-[18%] break-words">Name of the Feeder</TableHead>
