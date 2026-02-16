@@ -152,7 +152,11 @@ export default function DashboardLayout({ children }) {
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50 dark:bg-slate-900">
       {/* Desktop Sidebar */}
-      <aside className={`hidden md:flex ${isCollapsed ? 'w-20' : 'w-64'} bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex-col transition-all duration-300`}>
+      <aside
+        onMouseEnter={() => setIsCollapsed(false)}
+        onMouseLeave={() => setIsCollapsed(true)}
+        className={`hidden md:flex ${isCollapsed ? 'w-20' : 'w-64'} bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex-col transition-all duration-300`}
+      >
         <SidebarContent collapsed={isCollapsed} />
       </aside>
 

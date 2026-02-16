@@ -73,15 +73,19 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900 p-4"
-         style={{
-           backgroundImage: 'url(https://images.unsplash.com/photo-1757866419834-192728bdb138?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDB8MHwxfHNlYXJjaHwyfHxhYnN0cmFjdCUyMGVsZWN0cmljJTIwcG93ZXIlMjBsaW5lcyUyMG1pbmltYWxpc3R8ZW58MHx8fHwxNzcwMDMzNTU4fDA&ixlib=rb-4.1.0&q=85)',
-           backgroundSize: 'cover',
-           backgroundPosition: 'center'
-         }}>
+    <div
+      className="relative min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900 p-4"
+      style={{
+        backgroundImage:
+          'url(https://images.unsplash.com/photo-1757866419834-192728bdb138?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDB8MHwxfHNlYXJjaHwyfHxhYnN0cmFjdCUyMGVsZWN0cmljJTIwcG93ZXIlMjBsaW5lcyUyMG1pbmltYWxpc3R8ZW58MHx8fHwxNzcwMDMzNTU4fDA&ixlib=rb-4.1.0&q=85)',
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+      }}
+    >
       <div className="absolute inset-0 bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm"></div>
-      
-      <Card className="w-full max-w-md relative z-10 shadow-xl border-2 bg-white dark:bg-slate-800">
+
+      <div className="relative z-10 flex-1 flex items-center justify-center">
+        <Card className="w-full max-w-md shadow-xl border-2 bg-white dark:bg-slate-800">
         <CardHeader className="space-y-3 bg-white dark:bg-slate-800">
           <div className="flex items-center justify-center mb-2">
             <div className="p-3 bg-blue-600 rounded-lg">
@@ -206,7 +210,14 @@ export default function LoginPage() {
             </div>
           </form>
         </CardContent>
-      </Card>
+        </Card>
+      </div>
+
+      <footer className="relative z-10 mt-auto pt-8 pb-2">
+        <p className="text-center text-sm font-medium text-slate-500 dark:text-slate-400">
+          © 2026 VinTech Solutions. All rights reserved.
+        </p>
+      </footer>
     </div>
   );
 }
