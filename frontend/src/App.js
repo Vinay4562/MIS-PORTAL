@@ -9,6 +9,7 @@ import DashboardHome from '@/pages/DashboardHome';
 import LineLosses from '@/pages/LineLosses';
 import EnergyConsumption from '@/pages/EnergyConsumption';
 import MaxMinData from '@/pages/MaxMinData';
+import Interruptions from '@/pages/Interruptions';
 import Reports from '@/pages/Reports';
 import DashboardLayout from '@/components/DashboardLayout';
 import '@/App.css';
@@ -60,6 +61,13 @@ function App() {
               <ProtectedRoute>
                 <DashboardLayout>
                   <MaxMinData />
+                </DashboardLayout>
+              </ProtectedRoute>
+            } />
+            <Route path="/interruptions" element={
+              <ProtectedRoute>
+                <DashboardLayout>
+                  <Interruptions />
                 </DashboardLayout>
               </ProtectedRoute>
             } />

@@ -8,7 +8,7 @@ import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict, ValidationError
-from typing import List, Optional
+from typing import List, Optional, Dict, Any, Tuple
 import uuid
 from datetime import datetime, timezone, timedelta
 from passlib.context import CryptContext
@@ -64,6 +64,19 @@ def format_time(time_str):
                 hour = int(parts[0])
                 return f"{hour:02d}:{minute_part.zfill(2)}"
     return s
+
+
+def format_duration_hhmm(value):
+    if value is None or value == "":
+        return ""
+    try:
+        minutes = float(value)
+    except Exception:
+        return str(value)
+    total = int(round(minutes))
+    hours = total // 60
+    mins = total % 60
+    return f"{hours:02d}:{mins:02d}"
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -385,6 +398,7 @@ async def startup_db_client():
 
 origins = [
     "http://localhost:3000",
+    "http://localhost:3001",
     "https://mis-portal-liard.vercel.app",
     "https://mis-portal-production.up.railway.app",
     "https://mis-portal.vercel.app"
@@ -403,6 +417,10 @@ app.add_middleware(
 )
 
 api_router = APIRouter(prefix="/api")
+
+@api_router.get("/ping")
+async def ping():
+    return {"status": "ok"}
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
@@ -566,6 +584,29 @@ class MaxMinEntryCreate(BaseModel):
     feeder_id: str
     date: str
     data: dict
+
+class InterruptionEntry(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    feeder_id: str
+    date: str
+    data: dict
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class InterruptionEntryUpdate(BaseModel):
+    date: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
+
+
+class InterruptionEntryCreate(BaseModel):
+    date: str
+    data: Dict[str, Any]
+
+class InterruptionsImportPayload(BaseModel):
+    feeder_id: str
+    entries: List[dict]
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
@@ -855,6 +896,828 @@ async def get_entries(
         if isinstance(entry.get('updated_at'), str):
             entry['updated_at'] = datetime.fromisoformat(entry['updated_at'])
     return entries
+
+@api_router.get("/interruptions/entries/{feeder_id}", response_model=List[InterruptionEntry])
+async def get_interruption_entries(
+    feeder_id: str,
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    current_user: User = Depends(get_current_user)
+):
+    query = {"feeder_id": feeder_id}
+    if year and month:
+        start_date = f"{year}-{month:02d}-01"
+        if month == 12:
+            end_date = f"{year + 1}-01-01"
+        else:
+            end_date = f"{year}-{month + 1:02d}-01"
+        query["date"] = {"$gte": start_date, "$lt": end_date}
+    entries = await db.interruption_entries.find(query, {"_id": 0}).sort("date", 1).to_list(1000)
+    for entry in entries:
+        if isinstance(entry.get("created_at"), str):
+            entry["created_at"] = datetime.fromisoformat(entry["created_at"])
+        if isinstance(entry.get("updated_at"), str):
+            entry["updated_at"] = datetime.fromisoformat(entry["updated_at"])
+    return [InterruptionEntry(**entry) for entry in entries]
+
+
+@api_router.post("/interruptions/entries/{feeder_id}", response_model=InterruptionEntry)
+async def create_interruption_entry(
+    feeder_id: str,
+    payload: InterruptionEntryCreate,
+    current_user: User = Depends(get_current_user),
+):
+    feeder = await db.max_min_feeders.find_one({"id": feeder_id}, {"_id": 0})
+    if not feeder:
+        raise HTTPException(status_code=404, detail="Feeder not found")
+    data = payload.data or {}
+    date_str = payload.date
+    existing = None
+    start_time = data.get("start_time")
+    if start_time:
+        existing = await db.interruption_entries.find_one(
+            {"feeder_id": feeder_id, "date": date_str, "data.start_time": start_time},
+            {"_id": 0},
+        )
+    if existing:
+        raise HTTPException(status_code=400, detail="Interruption entry already exists for this start time")
+    entry_obj = InterruptionEntry(feeder_id=feeder_id, date=date_str, data=data).model_dump()
+    created_at = entry_obj.get("created_at")
+    updated_at = entry_obj.get("updated_at")
+    entry_obj["created_at"] = created_at.isoformat() if isinstance(created_at, datetime) else created_at
+    entry_obj["updated_at"] = updated_at.isoformat() if isinstance(updated_at, datetime) else updated_at
+    await db.interruption_entries.insert_one(entry_obj)
+    if isinstance(entry_obj.get("created_at"), str):
+        entry_obj["created_at"] = datetime.fromisoformat(entry_obj["created_at"])
+    if isinstance(entry_obj.get("updated_at"), str):
+        entry_obj["updated_at"] = datetime.fromisoformat(entry_obj["updated_at"])
+    return InterruptionEntry(**entry_obj)
+
+
+@api_router.put("/interruptions/entries/{entry_id}", response_model=InterruptionEntry)
+async def update_interruption_entry(
+    entry_id: str,
+    update_data: InterruptionEntryUpdate,
+    current_user: User = Depends(get_current_user),
+):
+    entry = await db.interruption_entries.find_one({"id": entry_id}, {"_id": 0})
+    if not entry:
+        raise HTTPException(status_code=404, detail="Interruption entry not found")
+    update_dict = update_data.model_dump(exclude_unset=True)
+    if "date" in update_dict and update_dict["date"] is not None:
+        entry["date"] = update_dict["date"]
+    if "data" in update_dict and update_dict["data"] is not None:
+        current_data = entry.get("data") or {}
+        current_data.update(update_dict["data"])
+        entry["data"] = current_data
+    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.interruption_entries.update_one({"id": entry_id}, {"$set": entry})
+    if isinstance(entry.get("created_at"), str):
+        entry["created_at"] = datetime.fromisoformat(entry["created_at"])
+    if isinstance(entry.get("updated_at"), str):
+        entry["updated_at"] = datetime.fromisoformat(entry["updated_at"])
+    return InterruptionEntry(**entry)
+
+
+@api_router.delete("/interruptions/entries/{entry_id}")
+async def delete_interruption_entry(
+    entry_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.interruption_entries.delete_one({"id": entry_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Interruption entry not found")
+    return {"message": "Interruption entry deleted successfully"}
+
+def _parse_whatsapp_messages(content: str):
+    lines = content.splitlines()
+    messages = []
+    current = None
+    pattern1 = re.compile(r'^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4}),?\s+(\d{1,2}):(\d{2})(?::\d{2})?(?:\s*([AP]M|[ap]m))?\s*-\s*(.*)$')
+    pattern2 = re.compile(r'^\[(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4}),\s+(\d{1,2}):(\d{2})(?::\d{2})?(?:\s*([AP]M|[ap]m))?\]\s*(.*)$')
+    for line in lines:
+        m = pattern1.match(line) or pattern2.match(line)
+        if m:
+            day = int(m.group(1))
+            month = int(m.group(2))
+            year = int(m.group(3))
+            if year < 100:
+                year += 2000
+            hour = int(m.group(4))
+            minute = int(m.group(5))
+            ampm = m.group(6)
+            if ampm:
+                up = ampm.upper()
+                if up == "PM" and hour != 12:
+                    hour += 12
+                if up == "AM" and hour == 12:
+                    hour = 0
+            try:
+                ts = datetime(year, month, day, hour, minute)
+            except ValueError:
+                continue
+            text = m.group(7).strip()
+            text = text.replace("*", "")
+            sender_split = text.split(":", 1)
+            if len(sender_split) == 2:
+                text = sender_split[1].strip()
+            current = {"timestamp": ts, "text": text}
+            messages.append(current)
+        else:
+            if current is not None:
+                extra = line.strip()
+                if extra:
+                    extra = extra.replace("*", "")
+                    current["text"] += " " + extra
+    return messages
+
+def _classify_interruption_message(text: str):
+    s = text.lower()
+    ignore_keywords = [
+        "image omitted",
+        "video omitted",
+        "excel",
+        ".xlsx",
+        "data upload",
+        "data uploaded",
+        "material received",
+    ]
+    s_clean = s
+    for k in ignore_keywords:
+        s_clean = s_clean.replace(k, "")
+    if not s_clean.strip():
+        return None
+    if "lc status:" in s_clean:
+        return None
+    if "stood ok" in s_clean or "line stood ok" in s_clean:
+        return "restore"
+    if "a/r success" in s_clean:
+        return "outage"
+    outage_keywords = [
+        "tripped",
+        "trip",
+        "outage",
+        "interruption",
+        "failed",
+        "shutdown",
+        "shut down",
+        "hand tripped",
+        "hand-tripped",
+        "protection operated",
+        "busbar protection optd",
+        "breakdown declared",
+        "blast occurred",
+        "a/r kept in off condition",
+        "under breakdown condition",
+        "lc issued",
+        "lc applied",
+        "nbfc issued",
+        "under lc",
+        "line clear issued",
+        "line clear for",
+        "taken out",
+        "taken for shutdown",
+        "shutdown type: planned",
+        "shutdown type: emergency",
+    ]
+    restore_keywords = [
+        "charged",
+        "charged at",
+        "normalized",
+        "normalised",
+        "revived",
+        "restored",
+        "back",
+        "resumed",
+        "energised",
+        "energized",
+        "nbfc returned",
+        "lc returned",
+        "line clear returned",
+        "taken into service",
+        "taken in to service",
+        "put in to service",
+        "put into service",
+        "breaker taken into service",
+        "line stood ok",
+        "stood ok",
+    ]
+    has_outage = any(k in s_clean for k in outage_keywords)
+    has_restore = any(k in s_clean for k in restore_keywords)
+    if has_outage and not has_restore:
+        return "outage"
+    if has_restore and not has_outage:
+        return "restore"
+    return None
+
+
+def _extract_time_from_text(text: str, base_dt: datetime) -> datetime:
+    s = text.lower()
+    m_dt = re.search(
+        r"(\d{1,2})-(\d{1,2})-(\d{2,4}).*?(\d{1,2})[:\.](\d{2})\s*(am|pm|hrs|hr|hours)?",
+        s,
+    )
+    if m_dt:
+        day = int(m_dt.group(1))
+        month = int(m_dt.group(2))
+        year_raw = m_dt.group(3)
+        if len(year_raw) == 2:
+            year = 2000 + int(year_raw)
+        else:
+            year = int(year_raw)
+        hour = int(m_dt.group(4))
+        minute = int(m_dt.group(5))
+        suffix = (m_dt.group(6) or "").lower()
+        if suffix in ["am", "pm"]:
+            if suffix == "pm" and hour != 12:
+                hour += 12
+            if suffix == "am" and hour == 12:
+                hour = 0
+        try:
+            return base_dt.replace(
+                year=year, month=month, day=day, hour=hour, minute=minute, second=0, microsecond=0
+            )
+        except ValueError:
+            pass
+    matches = list(re.finditer(r"(\d{1,2})[:\.](\d{2})\s*(am|pm|hrs|hr|hours)?", s))
+    if not matches:
+        return base_dt
+    with_suffix = [m for m in matches if (m.group(3) or "").strip()]
+    m = with_suffix[-1] if with_suffix else matches[-1]
+    hour = int(m.group(1))
+    minute = int(m.group(2))
+    suffix = m.group(3) or ""
+    suffix = suffix.lower()
+    if suffix in ["am", "pm"]:
+        if suffix == "pm" and hour != 12:
+            hour += 12
+        if suffix == "am" and hour == 12:
+            hour = 0
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return base_dt
+    return base_dt.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+
+def _split_cause_and_relay(text: str) -> Tuple[str, str]:
+    base = text or ""
+    lower = base.lower()
+    if "bus reactor" in lower and "hand tripped" in lower:
+        idx_bus = lower.find("125 mvar bus reactor")
+        if idx_bus == -1:
+            idx_bus = lower.find("bus reactor")
+        if idx_bus != -1:
+            base = base[idx_bus:]
+            lower = base.lower()
+    if "a/r success" in lower and "with following indications" in lower:
+        idx_follow = lower.find("with following indications")
+        relay = base[idx_follow + len("with following indications") :].strip(" -,:")
+        cause_segment = base[:idx_follow]
+        idx_ar = lower.find("a/r success")
+        if idx_ar != -1:
+            cause_segment = base[idx_ar:idx_follow]
+        cause = re.sub(
+            r"at\s+\d{1,2}[:\.]\d{2}\s*(?:hrs?|hours?)?",
+            "",
+            cause_segment,
+            flags=re.IGNORECASE,
+        )
+        cause = cause.strip(" .,-:")
+        return cause, relay
+    if "lc issued" in lower:
+        idx_lc = lower.find("lc issued")
+        segment = base[idx_lc:]
+        lower_seg = segment.lower()
+        idx_for = lower_seg.find(" for ")
+        if idx_for != -1:
+            cause_segment = segment[:idx_for]
+            relay = segment[idx_for:].lstrip(" -,:.")
+        else:
+            cause_segment = segment
+            relay = ""
+        cause = re.sub(
+            r"\bat\s+\d{1,2}[:\.]\d{2}\s*(?:hrs?|hours?)?\b",
+            "",
+            cause_segment,
+            flags=re.IGNORECASE,
+        )
+        cause = cause.strip(" .,-:")
+        return cause, relay.strip()
+    idx = lower.find(" for ")
+    if idx != -1:
+        cause_segment = base[:idx]
+        cause = re.sub(
+            r"\bat\s+\d{1,2}[:\.]\d{2}\s*(?:hrs?|hours?)?\b",
+            "",
+            cause_segment,
+            flags=re.IGNORECASE,
+        )
+        cause = cause.strip(" .,-:")
+        relay = base[idx:].lstrip(" -,:.")
+        return cause, relay
+    return base, ""
+
+
+def _extract_interruption_metadata(
+    outage_text: str, restore_text: Optional[str]
+) -> Dict[str, Any]:
+    base = outage_text or ""
+    restore = restore_text or ""
+    cause, relay = _split_cause_and_relay(base)
+    lower_both = (base + " " + restore).lower()
+
+    m_bay = re.search(r"(\d+-\d+)\s*bay\s+under\s+lc", base, flags=re.IGNORECASE)
+    if m_bay:
+        bay_id = m_bay.group(1)
+        cause = f"LC Issued on {bay_id} Bay"
+        if "4-14-52" in lower_both and "replacement" in lower_both:
+            relay = "for replacement of B ph limb of breaker 4-14-52"
+        elif "replacement" in lower_both and not relay:
+            relay = f"for replacement of breaker {bay_id}-52"
+
+    breakdown = "YES" if (
+        "breakdown declared" in lower_both
+        or "under breakdown condition" in lower_both
+    ) else "NO"
+
+    fault_identified = ""
+    fault_location = ""
+
+    m = re.search(r"(\d+(?:\.\d+)?)\s*km", base, flags=re.IGNORECASE)
+    if not m:
+        m = re.search(
+            r"distance\s*=?\s*(\d+(?:\.\d+)?)\s*km", base, flags=re.IGNORECASE
+        )
+    if m:
+        km_val = m.group(1)
+        fault_location = f"{km_val}km"
+
+    fault_keywords = [
+        "fault identified",
+        "flashover",
+        "flash over",
+        "conductor",
+        "insulator",
+        "oil leakage",
+        "pole damage",
+    ]
+    if any(k in lower_both for k in fault_keywords):
+        for sentence in re.split(r"[\.!?]+", base + " " + restore):
+            if any(k in sentence.lower() for k in fault_keywords):
+                fault_identified = sentence.strip()
+                break
+
+    if not fault_identified:
+        fault_identified = "-"
+    if not fault_location:
+        fault_location = "-"
+
+    remark_phrases = [
+        ("charged as per ld instructions", "Charged as per LD instructions"),
+        ("informed to ld", "Informed to LD"),
+        ("busbar charged through tie", "Busbar charged through tie"),
+        ("pir replacement done", "PIR replacement done"),
+        ("oil leakage arrested", "Oil leakage arrested"),
+        ("line stood ok", "Line stood OK"),
+        ("stood ok", "Stood OK"),
+        ("taken into service", "Taken into service"),
+        ("taken in to service", "Taken into service"),
+        ("put in to service", "Put into service"),
+        ("put into service", "Put into service"),
+    ]
+    remarks_parts: List[str] = []
+    for needle, label in remark_phrases:
+        if needle in lower_both and label not in remarks_parts:
+            remarks_parts.append(label)
+    remarks = ". ".join(remarks_parts) if remarks_parts else ""
+    action_taken = remarks
+
+    return {
+        "cause_of_interruption": cause,
+        "relay_indications_lc_work": relay,
+        "breakdown_declared": breakdown,
+        "fault_identified_during_patrolling": fault_identified,
+        "fault_location": fault_location,
+        "remarks": remarks,
+        "action_taken": action_taken,
+    }
+
+def _build_feeder_aliases(feeder_name: str):
+    name_lower = feeder_name.lower()
+    aliases = set()
+    aliases.add(name_lower)
+    tokens = name_lower.split()
+    if tokens:
+        first = tokens[0]
+        if first not in ("400kv", "220kv"):
+            aliases.add(first)
+            if "-" in first:
+                no_dash_space = first.replace("-", " ")
+                no_dash_compact = first.replace("-", "")
+                aliases.add(no_dash_space)
+                aliases.add(no_dash_compact)
+    if len(tokens) > 1:
+        aliases.add(" ".join(tokens[1:]))
+    clean = name_lower.replace("(", " ").replace(")", " ")
+    parts = clean.split()
+    if parts:
+        aliases.add(" ".join(parts))
+    if "nizamabad" in name_lower:
+        aliases.add(name_lower.replace("nizamabad", "nizambad"))
+        aliases.add("nizambad-1")
+        aliases.add("nizambad-2")
+    if "maheshwaram" in name_lower:
+        aliases.add(name_lower.replace("maheshwaram", "maheswaram"))
+        aliases.add("maheswaram-1")
+        aliases.add("maheswaram-2")
+    if "sadasivapet" in name_lower:
+        aliases.add(name_lower.replace("sadasivapet", "sadashivapet"))
+        aliases.add("sadashivapet-1")
+        aliases.add("sadashivapet-2")
+    if "thandur" in name_lower:
+        aliases.add(name_lower.replace("thandur", "tandur"))
+        aliases.add("tandur")
+    if "tandur" in name_lower:
+        aliases.add(name_lower.replace("tandur", "thandur"))
+        aliases.add("thandur")
+    return list(aliases)
+
+
+async def _build_interruptions_from_chat_for_all_feeders(
+    content: str,
+    year: Optional[int],
+    month: Optional[int],
+):
+    feeders = await db.max_min_feeders.find(
+        {"type": {"$in": ["feeder_400kv", "feeder_220kv", "ict_feeder", "reactor_feeder", "bay_feeder"]}},
+        {"_id": 0},
+    ).to_list(1000)
+    messages = _parse_whatsapp_messages(content)
+    aliases_map = {}
+    bus_reactor_feeder_id = None
+    for f in feeders:
+        aliases_map[f["id"]] = _build_feeder_aliases(f["name"])
+        name_lower = f["name"].lower()
+        if "bus reactor" in name_lower and f.get("type") == "reactor_feeder":
+            bus_reactor_feeder_id = f["id"]
+    events_by_feeder: Dict[str, List[Dict[str, Any]]] = {}
+    for msg in messages:
+        text = msg["text"]
+        if not text:
+            continue
+        lower = text.lower()
+        matched_feeder_id = None
+        if bus_reactor_feeder_id and "bus reactor" in lower:
+            matched_feeder_id = bus_reactor_feeder_id
+        else:
+            for feeder in feeders:
+                fid = feeder["id"]
+                aliases = aliases_map.get(fid) or []
+                if any(a in lower for a in aliases):
+                    matched_feeder_id = fid
+                    break
+        if not matched_feeder_id:
+            continue
+        kind = _classify_interruption_message(text)
+        if not kind:
+            continue
+        ts = _extract_time_from_text(text, msg["timestamp"])
+        if matched_feeder_id not in events_by_feeder:
+            events_by_feeder[matched_feeder_id] = []
+        events_by_feeder[matched_feeder_id].append(
+            {"timestamp": ts, "kind": kind, "text": text}
+        )
+    preview: List[Dict[str, Any]] = []
+    for feeder in feeders:
+        fid = feeder["id"]
+        events = events_by_feeder.get(fid, [])
+        if not events:
+            continue
+        if year:
+            events = [e for e in events if e["timestamp"].year == year]
+            if not events:
+                continue
+        events.sort(key=lambda e: e["timestamp"])
+        open_outages: List[Dict[str, Any]] = []
+        pairs: List[Dict[str, Any]] = []
+        for ev in events:
+            if ev["kind"] == "outage":
+                open_outages.append(ev)
+            elif ev["kind"] == "restore":
+                candidates = [o for o in open_outages if o["timestamp"] < ev["timestamp"]]
+                if not candidates:
+                    continue
+                restore_date = ev["timestamp"].date()
+                same_day = [o for o in candidates if o["timestamp"].date() == restore_date]
+                if same_day:
+                    outage = same_day[-1]
+                else:
+                    outage = candidates[-1]
+                open_outages.remove(outage)
+                start_ts = outage["timestamp"]
+                end_ts = ev["timestamp"]
+                if month and start_ts.month != month:
+                    continue
+                if end_ts <= start_ts:
+                    continue
+                duration_minutes = (end_ts - start_ts).total_seconds() / 60.0
+                date_str = start_ts.date().isoformat()
+                end_date_str = end_ts.date().isoformat()
+                start_time = start_ts.strftime("%H:%M")
+                end_time = end_ts.strftime("%H:%M")
+                meta = _extract_interruption_metadata(outage["text"], ev["text"])
+                pairs.append(
+                    {
+                        "feeder_id": fid,
+                        "feeder_name": feeder["name"],
+                        "date": date_str,
+                        "end_date": end_date_str,
+                        "start_time": start_time,
+                        "end_time": end_time,
+                        "duration_minutes": round(duration_minutes, 2),
+                        "description": outage["text"],
+                        **meta,
+                    }
+                )
+        for p in pairs:
+            exists = await db.interruption_entries.find_one(
+                {
+                    "feeder_id": p["feeder_id"],
+                    "date": p["date"],
+                    "data.start_time": p["start_time"],
+                },
+                {"_id": 0},
+            )
+            item = dict(p)
+            item["exists"] = bool(exists)
+            preview.append(item)
+    return preview
+
+@api_router.post("/interruptions/preview-import/{feeder_id}")
+async def preview_interruptions_import(
+    feeder_id: str,
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user)
+):
+    feeder = await db.max_min_feeders.find_one({"id": feeder_id}, {"_id": 0})
+    if not feeder:
+        raise HTTPException(status_code=404, detail="Feeder not found")
+    if feeder.get("type") not in ["feeder_400kv", "feeder_220kv", "ict_feeder", "reactor_feeder", "bay_feeder"]:
+        raise HTTPException(status_code=400, detail="Interruptions supported only for 400KV, 220KV, ICT, Reactor and Bay feeders")
+    filename = file.filename or ""
+    if not filename.lower().endswith(".txt"):
+        raise HTTPException(status_code=400, detail="Only WhatsApp .txt exports are supported")
+    raw = await file.read()
+    try:
+        content = raw.decode("utf-8", errors="ignore")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Failed to decode file as UTF-8 text")
+    messages = _parse_whatsapp_messages(content)
+    aliases = _build_feeder_aliases(feeder["name"])
+    events = []
+    for msg in messages:
+        text = msg["text"]
+        if not text:
+            continue
+        lower = text.lower()
+        if not any(a in lower for a in aliases):
+            continue
+        kind = _classify_interruption_message(text)
+        if not kind:
+            continue
+        events.append(
+            {
+                "timestamp": msg["timestamp"],
+                "kind": kind,
+                "text": text,
+            }
+        )
+    events.sort(key=lambda e: e["timestamp"])
+    open_outages = []
+    pairs = []
+    for ev in events:
+        if ev["kind"] == "outage":
+            open_outages.append(ev)
+        elif ev["kind"] == "restore":
+            candidates = [o for o in open_outages if o["timestamp"] < ev["timestamp"]]
+            if not candidates:
+                continue
+            restore_date = ev["timestamp"].date()
+            same_day = [o for o in candidates if o["timestamp"].date() == restore_date]
+            if same_day:
+                outage = same_day[-1]
+            else:
+                outage = candidates[-1]
+            open_outages.remove(outage)
+            start_ts = _extract_time_from_text(outage["text"], outage["timestamp"])
+            end_ts = _extract_time_from_text(ev["text"], ev["timestamp"])
+            if year and month:
+                if not ((start_ts.year == year and start_ts.month == month) or (end_ts.year == year and end_ts.month == month)):
+                    continue
+            if end_ts <= start_ts:
+                continue
+            duration_minutes = (end_ts - start_ts).total_seconds() / 60.0
+            date_str = start_ts.date().isoformat()
+            end_date_str = end_ts.date().isoformat()
+            start_time = start_ts.strftime("%H:%M")
+            end_time = end_ts.strftime("%H:%M")
+            meta = _extract_interruption_metadata(outage["text"], ev["text"])
+            pairs.append(
+                {
+                    "date": date_str,
+                    "end_date": end_date_str,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "duration_minutes": round(duration_minutes, 2),
+                    "description": outage["text"],
+                    **meta,
+                }
+            )
+    preview = []
+    for p in pairs:
+        exists = await db.interruption_entries.find_one(
+            {
+                "feeder_id": feeder_id,
+                "date": p["date"],
+                "data.start_time": p["start_time"],
+            },
+            {"_id": 0},
+        )
+        item = dict(p)
+        item["exists"] = bool(exists)
+        preview.append(item)
+    return preview
+
+@api_router.post("/interruptions/import-entries")
+async def import_interruption_entries(payload: InterruptionsImportPayload, current_user: User = Depends(get_current_user)):
+    feeder = await db.max_min_feeders.find_one({"id": payload.feeder_id}, {"_id": 0})
+    if not feeder:
+        raise HTTPException(status_code=404, detail="Feeder not found")
+    if feeder.get("type") not in ["feeder_400kv", "feeder_220kv", "ict_feeder", "reactor_feeder", "bay_feeder"]:
+        raise HTTPException(status_code=400, detail="Interruptions supported only for 400KV, 220KV, ICT, Reactor and Bay feeders")
+    entries_sorted = sorted(payload.entries, key=lambda x: (x.get("date") or "", x.get("start_time") or ""))
+    imported = 0
+    for e in entries_sorted:
+        date_str = e.get("date")
+        start_time = e.get("start_time")
+        if not date_str or not start_time:
+            continue
+        existing = await db.interruption_entries.find_one(
+            {"feeder_id": payload.feeder_id, "date": date_str, "data.start_time": start_time},
+            {"_id": 0},
+        )
+        if existing:
+            continue
+        data = {
+            "start_time": start_time,
+            "end_time": e.get("end_time"),
+            "end_date": e.get("end_date") or date_str,
+            "duration_minutes": e.get("duration_minutes"),
+            "description": e.get("description"),
+            "cause_of_interruption": e.get("cause_of_interruption"),
+            "relay_indications_lc_work": e.get("relay_indications_lc_work"),
+            "breakdown_declared": e.get("breakdown_declared"),
+            "fault_identified_during_patrolling": e.get("fault_identified_during_patrolling"),
+            "fault_location": e.get("fault_location"),
+            "remarks": e.get("remarks"),
+            "action_taken": e.get("action_taken"),
+        }
+        entry_obj = InterruptionEntry(feeder_id=payload.feeder_id, date=date_str, data=data).model_dump()
+        created_at = entry_obj.get("created_at")
+        updated_at = entry_obj.get("updated_at")
+        entry_obj["created_at"] = created_at.isoformat() if isinstance(created_at, datetime) else created_at
+        entry_obj["updated_at"] = updated_at.isoformat() if isinstance(updated_at, datetime) else updated_at
+        await db.interruption_entries.insert_one(entry_obj)
+        imported += 1
+    return {"imported": imported}
+
+
+@api_router.post("/interruptions/preview-import-all")
+async def preview_interruptions_import_all(
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    filename = file.filename or ""
+    if not filename.lower().endswith(".txt"):
+        raise HTTPException(status_code=400, detail="Only WhatsApp .txt exports are supported")
+    raw = await file.read()
+    try:
+        content = raw.decode("utf-8", errors="ignore")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Failed to decode file as UTF-8 text")
+    preview = await _build_interruptions_from_chat_for_all_feeders(content, year, month)
+    return preview
+
+
+class InterruptionsBulkImportPayload(BaseModel):
+    entries: List[Dict[str, Any]]
+
+
+@api_router.post("/interruptions/import-entries-all")
+async def import_interruption_entries_all(
+    payload: InterruptionsBulkImportPayload,
+    current_user: User = Depends(get_current_user),
+):
+    entries_sorted = sorted(
+        payload.entries,
+        key=lambda x: (
+            x.get("feeder_id") or "",
+            x.get("date") or "",
+            x.get("start_time") or "",
+        ),
+    )
+    imported = 0
+    for e in entries_sorted:
+        feeder_id = e.get("feeder_id")
+        if not feeder_id:
+            continue
+        feeder = await db.max_min_feeders.find_one({"id": feeder_id}, {"_id": 0})
+        if not feeder:
+            continue
+        if feeder.get("type") not in ["feeder_400kv", "feeder_220kv", "ict_feeder", "reactor_feeder", "bay_feeder"]:
+            continue
+        date_str = e.get("date")
+        start_time = e.get("start_time")
+        if not date_str or not start_time:
+            continue
+        existing = await db.interruption_entries.find_one(
+            {"feeder_id": feeder_id, "date": date_str, "data.start_time": start_time},
+            {"_id": 0},
+        )
+        if existing:
+            continue
+        data = {
+            "start_time": start_time,
+            "end_time": e.get("end_time"),
+            "end_date": e.get("end_date") or date_str,
+            "duration_minutes": e.get("duration_minutes"),
+            "description": e.get("description"),
+            "cause_of_interruption": e.get("cause_of_interruption"),
+            "relay_indications_lc_work": e.get("relay_indications_lc_work"),
+            "breakdown_declared": e.get("breakdown_declared"),
+            "fault_identified_during_patrolling": e.get("fault_identified_during_patrolling"),
+            "fault_location": e.get("fault_location"),
+            "remarks": e.get("remarks"),
+            "action_taken": e.get("action_taken"),
+        }
+        entry_obj = InterruptionEntry(feeder_id=feeder_id, date=date_str, data=data).model_dump()
+        created_at = entry_obj.get("created_at")
+        updated_at = entry_obj.get("updated_at")
+        entry_obj["created_at"] = created_at.isoformat() if isinstance(created_at, datetime) else created_at
+        entry_obj["updated_at"] = updated_at.isoformat() if isinstance(updated_at, datetime) else updated_at
+        await db.interruption_entries.insert_one(entry_obj)
+        imported += 1
+    return {"imported": imported}
+
+
+@api_router.post("/interruptions/normalize-existing")
+async def normalize_existing_interruptions(
+    current_user: User = Depends(get_current_user),
+):
+    cursor = db.interruption_entries.find({}, {"_id": 1, "date": 1, "data": 1})
+    updated = 0
+    async for doc in cursor:
+        data = doc.get("data") or {}
+        description = data.get("description") or ""
+        changed = False
+        if description:
+            cause, relay = _split_cause_and_relay(description)
+            if cause and data.get("cause_of_interruption") != cause:
+                data["cause_of_interruption"] = cause
+                changed = True
+            if relay and data.get("relay_indications_lc_work") != relay:
+                data["relay_indications_lc_work"] = relay
+                changed = True
+        date_str = doc.get("date")
+        start_time = data.get("start_time")
+        duration = data.get("duration_minutes")
+        if date_str and start_time and duration is not None:
+            try:
+                year, month, day = [int(p) for p in date_str.split("-")]
+                base = datetime(year, month, day)
+                parts = str(start_time).split(":")
+                if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                    hour = int(parts[0])
+                    minute = int(parts[1])
+                    base = base.replace(hour=hour, minute=minute)
+                    minutes = float(duration)
+                    end_dt = base + timedelta(minutes=minutes)
+                    end_date_str = end_dt.date().isoformat()
+                    if data.get("end_date") != end_date_str:
+                        data["end_date"] = end_date_str
+                        changed = True
+            except Exception:
+                pass
+        if changed:
+            await db.interruption_entries.update_one(
+                {"_id": doc["_id"]},
+                {"$set": {"data": data}},
+            )
+            updated += 1
+    return {"updated": updated}
 
 @api_router.post("/max-min/preview-import/{feeder_id}")
 async def preview_max_min_import(
@@ -1777,10 +2640,6 @@ async def import_energy_entries(payload: EnergyImportPayload, current_user: User
 
 @api_router.post("/max-min/init")
 async def init_max_min_feeders(current_user: User = Depends(get_current_user)):
-    existing_count = await db.max_min_feeders.count_documents({})
-    if existing_count > 0:
-        return {"message": "Max-Min feeders already initialized", "count": existing_count}
-    
     feeders_data = [
         {"name": "Bus + Station", "type": "bus_station"},
         {"name": "400KV MAHESHWARAM-1", "type": "feeder_400kv"},
@@ -1805,15 +2664,32 @@ async def init_max_min_feeders(current_user: User = Depends(get_current_user)):
         {"name": "ICT-2 (315MVA)", "type": "ict_feeder"},
         {"name": "ICT-3 (315MVA)", "type": "ict_feeder"},
         {"name": "ICT-4 (500MVA)", "type": "ict_feeder"},
+        {"name": "125MVAR Bus Reactor", "type": "reactor_feeder"},
+        {"name": "4-14 Bay", "type": "bay_feeder"},
+        {"name": "4-15 Bay", "type": "bay_feeder"},
+        {"name": "4-16 Bay", "type": "bay_feeder"},
+        {"name": "4-22 Bay", "type": "bay_feeder"},
     ]
-    
+    inserted = 0
     for feeder in feeders_data:
+        existing = await db.max_min_feeders.find_one({"name": feeder["name"]})
+        if existing:
+            await db.max_min_feeders.update_one(
+                {"_id": existing["_id"]},
+                {"$set": {"type": feeder["type"]}},
+            )
+            continue
         feeder_obj = MaxMinFeeder(**feeder)
         doc = feeder_obj.model_dump()
-        doc['created_at'] = doc['created_at'].isoformat()
+        doc["created_at"] = doc["created_at"].isoformat()
         await db.max_min_feeders.insert_one(doc)
-    
-    return {"message": "Max-Min feeders initialized successfully", "count": len(feeders_data)}
+        inserted += 1
+    total = await db.max_min_feeders.count_documents({})
+    return {
+        "message": "Max-Min feeders initialized or updated successfully",
+        "inserted": inserted,
+        "count": total,
+    }
 
 @api_router.get("/max-min/feeders", response_model=List[MaxMinFeeder])
 async def get_max_min_feeders(current_user: User = Depends(get_current_user)):
@@ -3465,6 +4341,196 @@ async def export_all_max_min_data(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename=MaxMin_All_{year}_{month:02d}.xlsx"}
+    )
+
+@api_router.get("/interruptions/export/{feeder_id}/{year}/{month}")
+async def export_interruptions_feeder(
+    feeder_id: str,
+    year: int,
+    month: int,
+    current_user: User = Depends(get_current_user)
+):
+    feeder = await db.max_min_feeders.find_one({"id": feeder_id}, {"_id": 0})
+    if not feeder:
+        raise HTTPException(status_code=404, detail="Feeder not found")
+    if feeder.get("type") not in ["feeder_400kv", "feeder_220kv", "ict_feeder", "reactor_feeder"]:
+        raise HTTPException(status_code=400, detail="Interruptions supported only for 400KV, 220KV, ICT and Reactor feeders")
+    start_date = f"{year}-{month:02d}-01"
+    if month == 12:
+        end_date = f"{year + 1}-01-01"
+    else:
+        end_date = f"{year}-{month + 1:02d}-01"
+    entries = await db.interruption_entries.find(
+        {"feeder_id": feeder_id, "date": {"$gte": start_date, "$lt": end_date}},
+        {"_id": 0},
+    ).sort("date", 1).to_list(1000)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = feeder["name"][:31]
+    header_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+    headers = [
+        "Date",
+        "Time From",
+        "Time To",
+        "Duration",
+        "Cause of Interruption",
+        "Relay Indications / LC Work carried out",
+        "Breakdown Declared (Yes/No)",
+        "Fault Identified During Patrolling",
+        "Fault Location",
+        "Remarks",
+        "Action Taken",
+    ]
+    ws.append(headers)
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for entry in entries:
+        data = entry.get("data", {})
+        end_date_str = data.get("end_date") or entry["date"]
+        end_time_str = format_time(data.get("end_time") or "")
+        if end_date_str == entry["date"]:
+            to_value = end_time_str
+        else:
+            to_value = f"{format_date(end_date_str)} {end_time_str}".strip()
+        ws.append(
+            [
+                format_date(entry["date"]),
+                format_time(data.get("start_time") or ""),
+                to_value,
+                format_duration_hhmm(data.get("duration_minutes")),
+                data.get("cause_of_interruption") or "",
+                data.get("relay_indications_lc_work") or "",
+                data.get("breakdown_declared") or "",
+                data.get("fault_identified_during_patrolling") or "",
+                data.get("fault_location") or "",
+                data.get("remarks") or "",
+                data.get("action_taken") or "",
+            ]
+        )
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    filename = f"Interruptions_{feeder['name']}_{year}_{month:02d}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+@api_router.get("/interruptions/export-all/{year}/{month}")
+async def export_interruptions_all(
+    year: int,
+    month: int,
+    current_user: User = Depends(get_current_user)
+):
+    feeders = await db.max_min_feeders.find(
+        {"type": {"$in": ["feeder_400kv", "feeder_220kv", "ict_feeder", "reactor_feeder", "bay_feeder"]}},
+        {"_id": 0},
+    ).to_list(100)
+    def feeder_sort_key(f):
+        name = f.get("name", "")
+        ftype = f.get("type")
+        is_bay = ftype == "bay_feeder"
+        if ftype == "feeder_400kv" and not is_bay:
+            group = 0
+        elif is_bay and name.startswith("4-"):
+            group = 1
+        elif ftype == "feeder_220kv" and not is_bay:
+            group = 2
+        elif is_bay and name.startswith("2-"):
+            group = 3
+        elif ftype == "ict_feeder":
+            group = 4
+        elif ftype == "reactor_feeder":
+            group = 5
+        else:
+            group = 6
+        return (group, name)
+    feeders = sorted(feeders, key=feeder_sort_key)
+    start_date = f"{year}-{month:02d}-01"
+    if month == 12:
+        end_date = f"{year + 1}-01-01"
+    else:
+        end_date = f"{year}-{month + 1:02d}-01"
+    wb = Workbook()
+    if "Sheet" in wb.sheetnames:
+        del wb["Sheet"]
+    header_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+
+    if not feeders:
+        ws = wb.create_sheet("No Data")
+        ws.cell(row=1, column=1, value="No feeders found")
+    created_any_sheet = False
+
+    for feeder in feeders:
+        entries = await db.interruption_entries.find(
+            {"feeder_id": feeder["id"], "date": {"$gte": start_date, "$lt": end_date}},
+            {"_id": 0},
+        ).sort("date", 1).to_list(1000)
+        if not entries:
+            continue
+
+        ws = wb.create_sheet(title=feeder["name"][:30])
+        created_any_sheet = True
+
+        headers = [
+            "Date",
+            "Time From",
+            "Time To",
+            "Duration",
+            "Cause of Interruption",
+            "Relay Indications / LC Work carried out",
+            "Breakdown Declared (Yes/No)",
+            "Fault Identified During Patrolling",
+            "Fault Location",
+            "Remarks",
+            "Action Taken",
+        ]
+        ws.append(headers)
+        for cell in ws[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        for entry in entries:
+            data = entry.get("data", {})
+            end_date_str = data.get("end_date") or entry["date"]
+            end_time_str = format_time(data.get("end_time") or "")
+            if end_date_str == entry["date"]:
+                to_value = end_time_str
+            else:
+                to_value = f"{format_date(end_date_str)} {end_time_str}".strip()
+            ws.append(
+                [
+                    format_date(entry["date"]),
+                    format_time(data.get("start_time") or ""),
+                    to_value,
+                    format_duration_hhmm(data.get("duration_minutes")),
+                    data.get("cause_of_interruption") or "",
+                    data.get("relay_indications_lc_work") or "",
+                    data.get("breakdown_declared") or "",
+                    data.get("fault_identified_during_patrolling") or "",
+                    data.get("fault_location") or "",
+                    data.get("remarks") or "",
+                    data.get("action_taken") or "",
+                ]
+            )
+
+    if not created_any_sheet and feeders:
+        ws = wb.create_sheet("No Data")
+        ws.cell(row=1, column=1, value="No interruptions found for this period")
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=Interruptions_All_{year}_{month:02d}.xlsx"},
     )
 
 async def _generate_fortnight_report_wb(year: int, month: int):

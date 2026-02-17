@@ -54,21 +54,10 @@ export default function LoginPage() {
         }
       }
     } catch (error) {
+      console.error('Login/signup failed', error);
       toast.error(error.response?.data?.detail || 'Authentication failed');
-      setLoading(false);
     } finally {
-      if (isLogin || (isSignupVerification && otp)) { 
-        // Only stop loading if we are navigating or failed. 
-        // If we just switched to verification mode, we already stopped loading above.
-        // But to be safe, we can just set loading false here if not navigated.
-        // Actually, navigate happens above. If we are here, it means error or stopped.
-        // But if we navigated, this component unmounts.
-        // If we switched mode, we set loading false manually.
-        // So this finally block is fine to ensure loading is off on error.
-      }
-      if (!isSignupVerification || otp) {
-         setLoading(false);
-      }
+      setLoading(false);
     }
   };
 

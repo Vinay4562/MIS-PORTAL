@@ -113,6 +113,23 @@ export default function DashboardLayout({ children }) {
 
         <button
           onClick={() => {
+            navigate('/interruptions');
+            setOpen(false);
+          }}
+          className={`w-full flex items-center ${collapsed ? 'justify-center' : 'gap-3'} px-4 py-3 rounded-lg transition-colors text-left ${
+            location.pathname === '/interruptions'
+              ? 'bg-blue-600 text-white'
+              : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+          }`}
+          data-testid="interruptions-menu"
+          title={collapsed ? "INTERRUPTIONS" : undefined}
+        >
+          <Activity className="w-5 h-5" />
+          {!collapsed && <span className="font-medium">INTERRUPTIONS</span>}
+        </button>
+
+        <button
+          onClick={() => {
             navigate('/reports');
             setOpen(false);
           }}

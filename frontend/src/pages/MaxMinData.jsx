@@ -243,7 +243,10 @@ export default function MaxMinData() {
     try {
       await axios.post(`${API}/max-min/init`);
       const response = await axios.get(`${API}/max-min/feeders`);
-      setFeeders(response.data);
+      const usable = (response.data || []).filter(
+        f => f.type !== 'bus_station' && f.type !== 'reactor_feeder' && f.type !== 'bay_feeder'
+      );
+      setFeeders(usable);
       setInitialized(true);
     } catch (error) {
       console.error('Failed to initialize max-min module:', error);
