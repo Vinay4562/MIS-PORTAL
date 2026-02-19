@@ -20,6 +20,7 @@ const REPORTS = [
   { id: 'daily-max-mva', title: 'Daily Max MVA (SAP)', description: 'Daily Max MVA Report from SAP' },
   { id: 'kpi', title: 'KPI', description: 'Key Performance Indicators Report' },
   { id: 'line-losses', title: 'Line Losses', description: 'Line Losses Report' },
+  { id: 'new-line-losses', title: 'New Line Losses Report', description: 'Line Losses Export/Import summary with losses' },
   { id: 'ptr-max-min', title: 'PTR Max–Min (Format-1)', description: 'PTR Max-Min Data Format-1' },
   { id: 'tl-max-loading', title: 'TL Max Loading (Format-4)', description: 'Transmission Line Max Loading Format-4' },
   { id: 'interruptions', title: 'Interruptions', description: 'Monthly Interruptions Report' },
@@ -133,7 +134,7 @@ export default function Reports() {
   };
 
   const handlePreview = async (report) => {
-    if (['boundary-meter', 'daily-max-mva', 'kpi', 'line-losses', 'ptr-max-min', 'tl-max-loading', 'fortnight', 'interruptions', 'mis-interruptions'].includes(report.id)) {
+    if (['boundary-meter', 'daily-max-mva', 'kpi', 'line-losses', 'new-line-losses', 'ptr-max-min', 'tl-max-loading', 'fortnight', 'interruptions', 'mis-interruptions'].includes(report.id)) {
         setPreviewReport(report);
         setPreviewOpen(true);
         setPreviewLoading(true);
@@ -151,6 +152,8 @@ export default function Reports() {
                 endpoint = `/reports/kpi/preview/${year}/${month}`;
             } else if (report.id === 'line-losses') {
                 endpoint = `/reports/line-losses/preview/${year}/${month}`;
+            } else if (report.id === 'new-line-losses') {
+                endpoint = `/reports/new-line-losses/preview/${year}/${month}`;
             } else if (report.id === 'ptr-max-min') {
                 endpoint = `/reports/ptr-max-min-format1/preview/${year}/${month}`;
             } else if (report.id === 'tl-max-loading') {
@@ -186,6 +189,7 @@ export default function Reports() {
         'daily-max-mva': `/reports/daily-max-mva/export/${year}/${month}`,
         'kpi': `/reports/kpi/export/${year}/${month}`,
         'line-losses': `/reports/line-losses/export/${year}/${month}`,
+        'new-line-losses': `/reports/new-line-losses/export/${year}/${month}`,
         'ptr-max-min': `/reports/ptr-max-min-format1/export/${year}/${month}`,
         'tl-max-loading': `/reports/tl-max-loading-format4/export/${year}/${month}`,
         'interruptions': `/reports/interruptions/export/${year}/${month}`,

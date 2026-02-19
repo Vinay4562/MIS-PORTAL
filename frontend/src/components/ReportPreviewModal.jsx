@@ -782,6 +782,268 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
         );
     }
 
+    if (reportId === "new-line-losses") {
+        const headerText = data?.header;
+        const flatRows = Array.isArray(data?.rows) ? data.rows : [];
+
+        const totalRows = flatRows.length;
+
+        const grouped = [];
+        for (let i = 0; i < flatRows.length; ) {
+            const first = flatRows[i];
+            const second = flatRows[i + 1];
+
+            if (
+                second &&
+                second.feeder_name === first.feeder_name &&
+                second.ss_name === first.ss_name
+            ) {
+                const exportRow =
+                    first.flow_type === "Export" ? first : second.flow_type === "Export" ? second : null;
+                const importRow =
+                    first.flow_type === "Import" ? first : second.flow_type === "Import" ? second : null;
+
+                grouped.push({
+                    ss_name: first.ss_name,
+                    feeder_name: first.feeder_name,
+                    exportRow,
+                    importRow,
+                });
+                i += 2;
+            } else {
+                const exportRow = first.flow_type === "Export" ? first : null;
+                const importRow = first.flow_type === "Import" ? first : null;
+                grouped.push({
+                    ss_name: first.ss_name,
+                    feeder_name: first.feeder_name,
+                    exportRow,
+                    importRow,
+                });
+                i += 1;
+            }
+        }
+
+        return (
+            <div className="w-full space-y-2 mt-2">
+                {headerText && (
+                    <div className="text-center font-semibold text-sm">
+                        {headerText}
+                    </div>
+                )}
+                <div className="border rounded-md max-w-full overflow-x-auto">
+                    <Table className="w-full table-fixed text-xs min-w-[1400px]">
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-1 w-[3%]">
+                                    Sl. No.
+                                </TableHead>
+                                <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-1 w-[10%] break-words">
+                                    Name of the SS
+                                </TableHead>
+                                <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-1 w-[15%] break-words">
+                                    Name of the Feeder
+                                </TableHead>
+                                <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-1 w-[8%] break-words">
+                                    Type of flow wrt SS
+                                </TableHead>
+                                <TableHead colSpan={4} className="text-center border bg-muted h-auto py-1">
+                                    Shankarpally End
+                                </TableHead>
+                                <TableHead colSpan={4} className="text-center border bg-muted h-auto py-1">
+                                    Other End
+                                </TableHead>
+                                <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-1 w-[8%]">
+                                    Losses
+                                </TableHead>
+                                <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-1 w-[8%]">
+                                    % of Losses
+                                </TableHead>
+                                <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-1 w-[10%]">
+                                    Remarks
+                                </TableHead>
+                            </TableRow>
+                            <TableRow>
+                                <TableHead className="text-center border bg-muted h-auto py-1">
+                                    Initial Reading
+                                </TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-1">
+                                    Final Reading
+                                </TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-1">
+                                    MF
+                                </TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-1">
+                                    Consumption in MWH
+                                </TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-1">
+                                    Initial Reading
+                                </TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-1">
+                                    Final Reading
+                                </TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-1">
+                                    MF
+                                </TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-1">
+                                    Consumption in MWH
+                                </TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {grouped && grouped.length > 0 ? (
+                                grouped.map((group, groupIndex) => {
+                                    const { ss_name, feeder_name, exportRow, importRow } = group;
+                                    const hasExport = !!exportRow;
+                                    const hasImport = !!importRow;
+                                    const rowSpanFeeder =
+                                        (hasExport ? 1 : 0) + (hasImport ? 1 : 0) || 1;
+
+                                    const rowsForGroup = [];
+
+                                    if (hasExport) {
+                                        rowsForGroup.push(
+                                            <TableRow key={`exp-${groupIndex}`}>
+                                                <TableCell className="text-center border px-2 py-2">
+                                                    {exportRow.sl_no}
+                                                </TableCell>
+                                                {groupIndex === 0 && (
+                                                    <TableCell
+                                                        rowSpan={totalRows}
+                                                        className="border px-2 py-2 break-words align-middle"
+                                                    >
+                                                        {ss_name}
+                                                    </TableCell>
+                                                )}
+                                                <TableCell
+                                                    rowSpan={rowSpanFeeder}
+                                                    className="border px-2 py-2 break-words align-middle"
+                                                >
+                                                    {feeder_name}
+                                                </TableCell>
+                                                <TableCell className="text-center border px-2 py-2 break-words">
+                                                    {exportRow.flow_type}
+                                                </TableCell>
+
+                                                <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
+                                                    {exportRow.sh_initial}
+                                                </TableCell>
+                                                <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
+                                                    {exportRow.sh_final}
+                                                </TableCell>
+                                                <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
+                                                    {exportRow.sh_mf}
+                                                </TableCell>
+                                                <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">
+                                                    {exportRow.sh_consumption != null
+                                                        ? exportRow.sh_consumption.toFixed(2)
+                                                        : ""}
+                                                </TableCell>
+
+                                                <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
+                                                    {exportRow.other_initial}
+                                                </TableCell>
+                                                <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
+                                                    {exportRow.other_final}
+                                                </TableCell>
+                                                <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
+                                                    {exportRow.other_mf}
+                                                </TableCell>
+                                                <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">
+                                                    {exportRow.other_consumption != null
+                                                        ? exportRow.other_consumption.toFixed(2)
+                                                        : ""}
+                                                </TableCell>
+
+                                                <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">
+                                                    {exportRow.losses != null
+                                                        ? exportRow.losses.toFixed(2)
+                                                        : ""}
+                                                </TableCell>
+                                                <TableCell className="text-right border px-2 py-2 font-bold whitespace-nowrap">
+                                                    {exportRow.pct_losses != null
+                                                        ? exportRow.pct_losses.toFixed(2)
+                                                        : "-"}
+                                                </TableCell>
+                                                <TableCell className="border px-2 py-2 break-words">
+                                                    {exportRow.remarks || ""}
+                                                </TableCell>
+                                            </TableRow>
+                                        );
+                                    }
+
+                                    if (hasImport) {
+                                        rowsForGroup.push(
+                                            <TableRow key={`imp-${groupIndex}`}>
+                                                <TableCell className="text-center border px-2 py-2">
+                                                    {importRow.sl_no}
+                                                </TableCell>
+                                                <TableCell className="text-center border px-2 py-2 break-words">
+                                                    {importRow.flow_type}
+                                                </TableCell>
+
+                                                <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
+                                                    {importRow.sh_initial}
+                                                </TableCell>
+                                                <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
+                                                    {importRow.sh_final}
+                                                </TableCell>
+                                                <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
+                                                    {importRow.sh_mf}
+                                                </TableCell>
+                                                <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">
+                                                    {importRow.sh_consumption != null
+                                                        ? importRow.sh_consumption.toFixed(2)
+                                                        : ""}
+                                                </TableCell>
+
+                                                <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
+                                                    {importRow.other_initial}
+                                                </TableCell>
+                                                <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
+                                                    {importRow.other_final}
+                                                </TableCell>
+                                                <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
+                                                    {importRow.other_mf}
+                                                </TableCell>
+                                                <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">
+                                                    {importRow.other_consumption != null
+                                                        ? importRow.other_consumption.toFixed(2)
+                                                        : ""}
+                                                </TableCell>
+
+                                                <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">
+                                                    {importRow.losses != null
+                                                        ? importRow.losses.toFixed(2)
+                                                        : ""}
+                                                </TableCell>
+                                                <TableCell className="text-right border px-2 py-2 font-bold whitespace-nowrap">
+                                                    {importRow.pct_losses != null
+                                                        ? importRow.pct_losses.toFixed(2)
+                                                        : "-"}
+                                                </TableCell>
+                                                <TableCell className="border px-2 py-2 break-words">
+                                                    {importRow.remarks || ""}
+                                                </TableCell>
+                                            </TableRow>
+                                        );
+                                    }
+
+                                    return rowsForGroup;
+                                })
+                            ) : (
+                                <TableRow>
+                                    <TableCell colSpan={15} className="text-center py-4">
+                                        No data available
+                                    </TableCell>
+                                </TableRow>
+                            )}
+                        </TableBody>
+                    </Table>
+                </div>
+            </div>
+        );
+    }
+
     if (title === "Line Losses" && reportId === "line-losses") {
         const rows = Array.isArray(data) ? data : data?.lines || [];
 

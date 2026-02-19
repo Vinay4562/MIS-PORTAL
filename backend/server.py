@@ -7366,186 +7366,181 @@ async def preview_interruptions_report(
 
 # --- Line Losses Report ---
 
+async def _get_line_losses_report_data(year: int, month: int) -> List[Dict[str, Any]]:
+    import calendar
+
+    start_date = f"{year}-{month:02d}-01"
+    if month == 12:
+        end_date = f"{year + 1}-01-01"
+    else:
+        end_date = f"{year}-{month + 1:02d}-01"
+
+    all_feeders = await db.feeders.find({}, {"_id": 0}).to_list(100)
+
+    FEEDER_MAPPING = {
+        "400 KV Shankarpally-MHRM-2": "400KV MAHESHWARAM-2",
+        "400 KV Shankarpally-MHRM-1": "400KV MAHESHWARAM-1",
+        "400 KV Shankarpally-Narsapur-1": "400KV NARSAPUR-1",
+        "400 KV Shankarpally-Narsapur-2": "400KV NARSAPUR-2",
+        "400 KV KethiReddyPally-1": "400KV KETHIREDDYPALLY-1",
+        "400 KV KethiReddyPally-2": "400KV KETHIREDDYPALLY-2",
+        "400 KV Nizamabad-1&2": "400KV NIZAMABAD-1 & 2",
+        "220 KV Parigi-1": "220KV PARIGI-1",
+        "220 KV Parigi-2": "220KV PARIGI-2",
+        "220 KV Tandur": "220KV THANDUR",
+        "220 KV Gachibowli-1": "220KV GACHIBOWLI-1",
+        "220 KV Gachibowli-2": "220KV GACHIBOWLI-2",
+        "220 KV KethiReddyPally": "220KV KETHIREDDYPALLY",
+        "220 KV Yeddumailaram-1": "220KV YEDDUMAILARAM-1",
+        "220 KV Yeddumailaram-2": "220KV YEDDUMAILARAM-2",
+        "220 KV Sadasivapet-1": "220KV SADASIVAPET-1",
+        "220 KV Sadasivapet-2": "220KV SADASIVAPET-2",
+    }
+
+    FEEDER_ORDER = [
+        "400KV MAHESHWARAM-2",
+        "400KV MAHESHWARAM-1",
+        "400KV NARSAPUR-1",
+        "400KV NARSAPUR-2",
+        "400KV KETHIREDDYPALLY-1",
+        "400KV KETHIREDDYPALLY-2",
+        "400KV NIZAMABAD-1 & 2",
+        "220KV PARIGI-1",
+        "220KV PARIGI-2",
+        "220KV THANDUR",
+        "220KV GACHIBOWLI-1",
+        "220KV GACHIBOWLI-2",
+        "220KV KETHIREDDYPALLY",
+        "220KV YEDDUMAILARAM-1",
+        "220KV YEDDUMAILARAM-2",
+        "220KV SADASIVAPET-1",
+        "220KV SADASIVAPET-2",
+    ]
+
+    target_feeders: List[Dict[str, Any]] = []
+    for f in all_feeders:
+        if f.get("name") in FEEDER_MAPPING:
+            f["display_name"] = FEEDER_MAPPING[f["name"]]
+            target_feeders.append(f)
+
+    target_feeders.sort(
+        key=lambda x: FEEDER_ORDER.index(x["display_name"])
+        if x["display_name"] in FEEDER_ORDER
+        else 999
+    )
+
+    entries = await db.entries.find(
+        {"date": {"$gte": start_date, "$lt": end_date}},
+        {"_id": 0},
+    ).to_list(5000)
+
+    entries_by_feeder: Dict[str, List[Dict[str, Any]]] = {}
+    for e in entries:
+        fid = e.get("feeder_id")
+        if not fid:
+            continue
+        if fid not in entries_by_feeder:
+            entries_by_feeder[fid] = []
+        entries_by_feeder[fid].append(e)
+
+    report_data: List[Dict[str, Any]] = []
+    for idx, f in enumerate(target_feeders):
+        f_entries = entries_by_feeder.get(f["id"], [])
+        f_entries.sort(key=lambda x: x["date"])
+
+        data: Dict[str, Any] = {
+            "sl_no": idx + 1,
+            "feeder_name": f["display_name"],
+            "shankarpally": {"import": {}, "export": {}},
+            "other_end": {"import": {}, "export": {}},
+            "stats": {},
+        }
+
+        if f_entries:
+            first = f_entries[0]
+            last = f_entries[-1]
+
+            s_imp_init = first.get("end1_import_initial", 0)
+            s_imp_final = last.get("end1_import_final", 0)
+            s_imp_mf = f.get("end1_import_mf", 1)
+            s_imp_cons = (s_imp_final - s_imp_init) * s_imp_mf
+
+            data["shankarpally"]["import"] = {
+                "initial": s_imp_init,
+                "final": s_imp_final,
+                "mf": s_imp_mf,
+                "consumption": s_imp_cons,
+            }
+
+            s_exp_init = first.get("end1_export_initial", 0)
+            s_exp_final = last.get("end1_export_final", 0)
+            s_exp_mf = f.get("end1_export_mf", 1)
+            s_exp_cons = (s_exp_final - s_exp_init) * s_exp_mf
+
+            data["shankarpally"]["export"] = {
+                "initial": s_exp_init,
+                "final": s_exp_final,
+                "mf": s_exp_mf,
+                "consumption": s_exp_cons,
+            }
+
+            o_imp_init = first.get("end2_import_initial", 0)
+            o_imp_final = last.get("end2_import_final", 0)
+            o_imp_mf = f.get("end2_import_mf", 1)
+            o_imp_cons = (o_imp_final - o_imp_init) * o_imp_mf
+
+            data["other_end"]["import"] = {
+                "initial": o_imp_init,
+                "final": o_imp_final,
+                "mf": o_imp_mf,
+                "consumption": o_imp_cons,
+            }
+
+            o_exp_init = first.get("end2_export_initial", 0)
+            o_exp_final = last.get("end2_export_final", 0)
+            o_exp_mf = f.get("end2_export_mf", 1)
+            o_exp_cons = (o_exp_final - o_exp_init) * o_exp_mf
+
+            data["other_end"]["export"] = {
+                "initial": o_exp_init,
+                "final": o_exp_final,
+                "mf": o_exp_mf,
+                "consumption": o_exp_cons,
+            }
+
+            D = s_imp_cons
+            L = o_imp_cons
+            H = s_exp_cons
+            P = o_exp_cons
+            numerator = (D + L) - (H + P)
+            denominator = D + L
+            pct_loss = (numerator / denominator * 100) if denominator != 0 else 0
+            data["stats"]["pct_loss"] = pct_loss
+        else:
+            for end in ["shankarpally", "other_end"]:
+                for type_ in ["import", "export"]:
+                    data[end][type_] = {
+                        "initial": 0,
+                        "final": 0,
+                        "mf": 0,
+                        "consumption": 0,
+                    }
+            data["stats"]["pct_loss"] = 0
+
+        report_data.append(data)
+
+    return report_data
+
+
 @api_router.get("/reports/line-losses/preview/{year}/{month}")
 async def get_line_losses_report_preview(
     year: int,
     month: int,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     try:
-        import calendar
-        
-        # 1. Date Range
-        start_date = f"{year}-{month:02d}-01"
-        if month == 12:
-            end_date = f"{year + 1}-01-01"
-        else:
-            end_date = f"{year}-{month + 1:02d}-01"
-            
-        # 2. Get Feeders (Line Losses Module)
-        # We need to use 'feeders' collection
-        all_feeders = await db.feeders.find({}, {"_id": 0}).to_list(100)
-        
-        # Mapping DB Names to Report Names
-        FEEDER_MAPPING = {
-            "400 KV Shankarpally-MHRM-2": "400KV MAHESHWARAM-2",
-            "400 KV Shankarpally-MHRM-1": "400KV MAHESHWARAM-1",
-            "400 KV Shankarpally-Narsapur-1": "400KV NARSAPUR-1",
-            "400 KV Shankarpally-Narsapur-2": "400KV NARSAPUR-2",
-            "400 KV KethiReddyPally-1": "400KV KETHIREDDYPALLY-1",
-            "400 KV KethiReddyPally-2": "400KV KETHIREDDYPALLY-2",
-            "400 KV Nizamabad-1&2": "400KV NIZAMABAD-1 & 2",
-            "220 KV Parigi-1": "220KV PARIGI-1",
-            "220 KV Parigi-2": "220KV PARIGI-2",
-            "220 KV Tandur": "220KV THANDUR",
-            "220 KV Gachibowli-1": "220KV GACHIBOWLI-1",
-            "220 KV Gachibowli-2": "220KV GACHIBOWLI-2",
-            "220 KV KethiReddyPally": "220KV KETHIREDDYPALLY",
-            "220 KV Yeddumailaram-1": "220KV YEDDUMAILARAM-1",
-            "220 KV Yeddumailaram-2": "220KV YEDDUMAILARAM-2",
-            "220 KV Sadasivapet-1": "220KV SADASIVAPET-1",
-            "220 KV Sadasivapet-2": "220KV SADASIVAPET-2"
-        }
-
-        # Filter and Sort
-        FEEDER_ORDER = [
-            "400KV MAHESHWARAM-2",
-            "400KV MAHESHWARAM-1",
-            "400KV NARSAPUR-1",
-            "400KV NARSAPUR-2",
-            "400KV KETHIREDDYPALLY-1",
-            "400KV KETHIREDDYPALLY-2",
-            "400KV NIZAMABAD-1 & 2",
-            "220KV PARIGI-1",
-            "220KV PARIGI-2",
-            "220KV THANDUR",
-            "220KV GACHIBOWLI-1",
-            "220KV GACHIBOWLI-2",
-            "220KV KETHIREDDYPALLY",
-            "220KV YEDDUMAILARAM-1",
-            "220KV YEDDUMAILARAM-2",
-            "220KV SADASIVAPET-1",
-            "220KV SADASIVAPET-2"
-        ]
-        
-        target_feeders = []
-        for f in all_feeders:
-            if f['name'] in FEEDER_MAPPING:
-                f['display_name'] = FEEDER_MAPPING[f['name']]
-                target_feeders.append(f)
-        
-        target_feeders.sort(key=lambda x: FEEDER_ORDER.index(x['display_name']) if x['display_name'] in FEEDER_ORDER else 999)
-        
-        # 3. Get Entries
-        entries = await db.entries.find(
-            {"date": {"$gte": start_date, "$lt": end_date}},
-            {"_id": 0}
-        ).to_list(5000)
-        
-        entries_by_feeder = {}
-        for e in entries:
-            if e['feeder_id'] not in entries_by_feeder:
-                entries_by_feeder[e['feeder_id']] = []
-            entries_by_feeder[e['feeder_id']].append(e)
-            
-        # 4. Build Data
-        report_data = []
-        for idx, f in enumerate(target_feeders):
-            f_entries = entries_by_feeder.get(f['id'], [])
-            # Sort by date
-            f_entries.sort(key=lambda x: x['date'])
-            
-            data = {
-                "sl_no": idx + 1,
-                "feeder_name": f['display_name'],
-                "shankarpally": {"import": {}, "export": {}},
-                "other_end": {"import": {}, "export": {}},
-                "stats": {}
-            }
-            
-            if f_entries:
-                first = f_entries[0]
-                last = f_entries[-1]
-                
-                # Shankarpally (End 1)
-                # Import
-                s_imp_init = first.get('end1_import_initial', 0)
-                s_imp_final = last.get('end1_import_final', 0)
-                s_imp_mf = f.get('end1_import_mf', 1)
-                s_imp_cons = (s_imp_final - s_imp_init) * s_imp_mf
-                
-                data["shankarpally"]["import"] = {
-                    "initial": s_imp_init,
-                    "final": s_imp_final,
-                    "mf": s_imp_mf,
-                    "consumption": s_imp_cons
-                }
-                
-                # Export
-                s_exp_init = first.get('end1_export_initial', 0)
-                s_exp_final = last.get('end1_export_final', 0)
-                s_exp_mf = f.get('end1_export_mf', 1)
-                s_exp_cons = (s_exp_final - s_exp_init) * s_exp_mf
-                
-                data["shankarpally"]["export"] = {
-                    "initial": s_exp_init,
-                    "final": s_exp_final,
-                    "mf": s_exp_mf,
-                    "consumption": s_exp_cons
-                }
-                
-                # Other End (End 2)
-                # Import
-                o_imp_init = first.get('end2_import_initial', 0)
-                o_imp_final = last.get('end2_import_final', 0)
-                o_imp_mf = f.get('end2_import_mf', 1)
-                o_imp_cons = (o_imp_final - o_imp_init) * o_imp_mf
-                
-                data["other_end"]["import"] = {
-                    "initial": o_imp_init,
-                    "final": o_imp_final,
-                    "mf": o_imp_mf,
-                    "consumption": o_imp_cons
-                }
-                
-                # Export
-                o_exp_init = first.get('end2_export_initial', 0)
-                o_exp_final = last.get('end2_export_final', 0)
-                o_exp_mf = f.get('end2_export_mf', 1)
-                o_exp_cons = (o_exp_final - o_exp_init) * o_exp_mf
-                
-                data["other_end"]["export"] = {
-                    "initial": o_exp_init,
-                    "final": o_exp_final,
-                    "mf": o_exp_mf,
-                    "consumption": o_exp_cons
-                }
-                
-                # Calculate Losses
-                # Q = (D+L-H-P)/(D+L)
-                D = s_imp_cons
-                L = o_imp_cons
-                H = s_exp_cons
-                P = o_exp_cons
-                
-                numerator = (D + L) - (H + P)
-                denominator = (D + L)
-                
-                pct_loss = (numerator / denominator * 100) if denominator != 0 else 0
-                
-                data["stats"]["pct_loss"] = pct_loss
-                
-            else:
-                # No data
-                for end in ["shankarpally", "other_end"]:
-                    for type_ in ["import", "export"]:
-                        data[end][type_] = {"initial": 0, "final": 0, "mf": 0, "consumption": 0}
-                data["stats"]["pct_loss"] = 0
-                
-            report_data.append(data)
-            
-        return report_data
-        
+        data = await _get_line_losses_report_data(year, month)
+        return data
     except Exception as e:
         import traceback
         error_msg = traceback.format_exc()
@@ -7950,6 +7945,267 @@ async def _generate_line_losses_report_wb(year: int, month: int):
     
     return wb
 
+
+async def _get_new_line_losses_report_data(year: int, month: int) -> Dict[str, Any]:
+    import calendar
+    from datetime import date
+
+    base_rows = await _get_line_losses_report_data(year, month)
+
+    if month == 1:
+        prev_year = year - 1
+        prev_month = 12
+    else:
+        prev_year = year
+        prev_month = month - 1
+
+    prev_last_day = calendar.monthrange(prev_year, prev_month)[1]
+    curr_last_day = calendar.monthrange(year, month)[1]
+    prev_end = date(prev_year, prev_month, prev_last_day)
+    curr_end = date(year, month, curr_last_day)
+
+    prev_label = prev_end.strftime("%d-%m-%Y") + " (12:00 Hrs)"
+    curr_label = curr_end.strftime("%d-%m-%Y") + " (12:00 Hrs)"
+
+    header_text = (
+        "Line loss report of 400KV & 220kV feeders at 400 KV Shankarpally "
+        f"From {prev_label} to {curr_label}"
+    )
+
+    rows: List[Dict[str, Any]] = []
+    sl = 1
+    ss_name = "400KV SHANKARPALLY"
+
+    for base in base_rows:
+        feeder_name = base.get("feeder_name", "")
+        shank = base.get("shankarpally") or {}
+        other = base.get("other_end") or {}
+
+        s_exp = shank.get("export") or {}
+        o_imp = other.get("import") or {}
+        s_exp_cons = float(s_exp.get("consumption") or 0)
+        o_imp_cons = float(o_imp.get("consumption") or 0)
+        loss_exp = s_exp_cons - o_imp_cons
+        pct_exp = (loss_exp / s_exp_cons * 100.0) if s_exp_cons != 0 else None
+
+        rows.append(
+            {
+                "sl_no": sl,
+                "ss_name": ss_name,
+                "feeder_name": feeder_name,
+                "flow_type": "Export",
+                "sh_initial": s_exp.get("initial", 0),
+                "sh_final": s_exp.get("final", 0),
+                "sh_mf": s_exp.get("mf", 0),
+                "sh_consumption": s_exp_cons,
+                "other_initial": o_imp.get("initial", 0),
+                "other_final": o_imp.get("final", 0),
+                "other_mf": o_imp.get("mf", 0),
+                "other_consumption": o_imp_cons,
+                "losses": loss_exp,
+                "pct_losses": pct_exp,
+                "remarks": "",
+            }
+        )
+        sl += 1
+
+        s_imp = shank.get("import") or {}
+        o_exp = other.get("export") or {}
+        s_imp_cons = float(s_imp.get("consumption") or 0)
+        o_exp_cons = float(o_exp.get("consumption") or 0)
+        loss_imp = s_imp_cons - o_exp_cons
+        pct_imp = (loss_imp / s_imp_cons * 100.0) if s_imp_cons != 0 else None
+
+        rows.append(
+            {
+                "sl_no": sl,
+                "ss_name": ss_name,
+                "feeder_name": feeder_name,
+                "flow_type": "Import",
+                "sh_initial": s_imp.get("initial", 0),
+                "sh_final": s_imp.get("final", 0),
+                "sh_mf": s_imp.get("mf", 0),
+                "sh_consumption": s_imp_cons,
+                "other_initial": o_exp.get("initial", 0),
+                "other_final": o_exp.get("final", 0),
+                "other_mf": o_exp.get("mf", 0),
+                "other_consumption": o_exp_cons,
+                "losses": loss_imp,
+                "pct_losses": pct_imp,
+                "remarks": "",
+            }
+        )
+        sl += 1
+
+    return {
+        "header": header_text,
+        "rows": rows,
+    }
+
+
+async def _generate_new_line_losses_report_wb(year: int, month: int):
+    from openpyxl.styles import Border, Side, Alignment, Font
+    from openpyxl.utils import get_column_letter
+
+    data = await _get_new_line_losses_report_data(year, month)
+    header_text = data.get("header", "")
+    rows = data.get("rows") or []
+
+    thin_border = Border(
+        left=Side(style="thin"),
+        right=Side(style="thin"),
+        top=Side(style="thin"),
+        bottom=Side(style="thin"),
+    )
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    right_align = Alignment(horizontal="right", vertical="center")
+    bold = Font(bold=True)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "New Line Losses"
+
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=15)
+    c = ws.cell(row=1, column=1, value=header_text)
+    c.font = bold
+    c.alignment = center
+    c.border = thin_border
+
+    ws.merge_cells(start_row=2, start_column=1, end_row=3, end_column=1)
+    ws.cell(row=2, column=1, value="Sl.No").alignment = center
+    ws.cell(row=2, column=1).border = thin_border
+
+    ws.merge_cells(start_row=2, start_column=2, end_row=3, end_column=2)
+    ws.cell(row=2, column=2, value="Name of the SS").alignment = center
+    ws.cell(row=2, column=2).border = thin_border
+
+    ws.merge_cells(start_row=2, start_column=3, end_row=3, end_column=3)
+    ws.cell(row=2, column=3, value="Name of the Feeder").alignment = center
+    ws.cell(row=2, column=3).border = thin_border
+
+    ws.merge_cells(start_row=2, start_column=4, end_row=3, end_column=4)
+    ws.cell(row=2, column=4, value="Type of flow wrt SS").alignment = center
+    ws.cell(row=2, column=4).border = thin_border
+
+    ws.merge_cells(start_row=2, start_column=5, end_row=2, end_column=8)
+    ws.cell(row=2, column=5, value="Shankarpally End").alignment = center
+    ws.cell(row=2, column=5).font = bold
+    ws.cell(row=2, column=5).border = thin_border
+
+    ws.merge_cells(start_row=2, start_column=9, end_row=2, end_column=12)
+    ws.cell(row=2, column=9, value="Other End").alignment = center
+    ws.cell(row=2, column=9).font = bold
+    ws.cell(row=2, column=9).border = thin_border
+
+    ws.merge_cells(start_row=2, start_column=13, end_row=3, end_column=13)
+    ws.cell(row=2, column=13, value="Losses").alignment = center
+    ws.cell(row=2, column=13).border = thin_border
+
+    ws.merge_cells(start_row=2, start_column=14, end_row=3, end_column=14)
+    ws.cell(row=2, column=14, value="% of Losses").alignment = center
+    ws.cell(row=2, column=14).border = thin_border
+
+    ws.merge_cells(start_row=2, start_column=15, end_row=3, end_column=15)
+    ws.cell(row=2, column=15, value="Remarks").alignment = center
+    ws.cell(row=2, column=15).border = thin_border
+
+    headers = [
+        "Initial Reading",
+        "Final Reading",
+        "MF",
+        "Consumption in MWH",
+        "Initial Reading",
+        "Final Reading",
+        "MF",
+        "Consumption in MWH",
+    ]
+    col = 5
+    for h in headers:
+        cell = ws.cell(row=3, column=col, value=h)
+        cell.alignment = center
+        cell.font = bold
+        cell.border = thin_border
+        col += 1
+
+    row_idx = 4
+    for r in rows:
+        ws.cell(row=row_idx, column=1, value=r.get("sl_no")).alignment = center
+        ws.cell(row=row_idx, column=1).border = thin_border
+
+        ws.cell(row=row_idx, column=2, value=r.get("ss_name")).alignment = center
+        ws.cell(row=row_idx, column=2).border = thin_border
+
+        ws.cell(row=row_idx, column=3, value=r.get("feeder_name")).alignment = center
+        ws.cell(row=row_idx, column=3).border = thin_border
+
+        ws.cell(row=row_idx, column=4, value=r.get("flow_type")).alignment = center
+        ws.cell(row=row_idx, column=4).border = thin_border
+
+        numeric_fields = [
+            ("sh_initial", 5),
+            ("sh_final", 6),
+            ("sh_mf", 7),
+            ("sh_consumption", 8),
+            ("other_initial", 9),
+            ("other_final", 10),
+            ("other_mf", 11),
+            ("other_consumption", 12),
+            ("losses", 13),
+            ("pct_losses", 14),
+        ]
+        for key, col_idx in numeric_fields:
+            val = r.get(key)
+            display_val = "-" if key == "pct_losses" and val is None else val
+            cell = ws.cell(row=row_idx, column=col_idx, value=display_val)
+            cell.alignment = right_align
+            cell.border = thin_border
+
+        ws.cell(row=row_idx, column=15, value=r.get("remarks", "")).border = thin_border
+        row_idx += 1
+
+    if rows:
+        first_data_row = 4
+        last_data_row = first_data_row + len(rows) - 1
+
+        ws.merge_cells(
+            start_row=first_data_row,
+            start_column=2,
+            end_row=last_data_row,
+            end_column=2,
+        )
+        ss_cell = ws.cell(row=first_data_row, column=2)
+        ss_cell.alignment = center
+        ss_cell.border = thin_border
+
+        total_rows = len(rows)
+        for i in range(0, total_rows, 2):
+            r1 = rows[i]
+            r2 = rows[i + 1] if i + 1 < total_rows else None
+            if not r2 or r1.get("feeder_name") != r2.get("feeder_name"):
+                continue
+            row_start = first_data_row + i
+            row_end = row_start + 1
+            ws.merge_cells(
+                start_row=row_start,
+                start_column=3,
+                end_row=row_end,
+                end_column=3,
+            )
+            feeder_cell = ws.cell(row=row_start, column=3)
+            feeder_cell.alignment = center
+            feeder_cell.border = thin_border
+
+    for col_idx in range(1, 16):
+        letter = get_column_letter(col_idx)
+        max_len = 0
+        for cell in ws[letter]:
+            val = cell.value
+            if val is not None:
+                max_len = max(max_len, len(str(val)))
+        ws.column_dimensions[letter].width = max(max_len + 2, 10)
+
+    return wb
+
 @api_router.get("/reports/line-losses/export/{year}/{month}")
 async def export_line_losses_report(
     year: int,
@@ -7980,6 +8236,41 @@ async def export_line_losses_report(
             f.write(error_msg)
         print(error_msg)
         return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+@api_router.get("/reports/new-line-losses/preview/{year}/{month}")
+async def get_new_line_losses_report_preview(
+    year: int,
+    month: int,
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        return await _get_new_line_losses_report_data(year, month)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@api_router.get("/reports/new-line-losses/export/{year}/{month}")
+async def export_new_line_losses_report(
+    year: int,
+    month: int,
+    current_user: User = Depends(get_current_user),
+):
+    wb = await _generate_new_line_losses_report_wb(year, month)
+    try:
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        filename = f"New_Line_Losses_{year}_{month:02d}.xlsx"
+
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+    finally:
+        wb.close()
 
 # --- PTR Max-Min (Format-1) Endpoints ---
 
@@ -8719,6 +9010,20 @@ async def send_reports_email_endpoint(
                 print(error_msg)
                 errors.append(error_msg)
              
+        # 5a. New Line Losses (optional - only when explicitly requested)
+        if report_ids and 'new-line-losses' in report_ids:
+            try:
+                wb = await _generate_new_line_losses_report_wb(year, month)
+                output = io.BytesIO()
+                wb.save(output)
+                output.seek(0)
+                attachments.append((f"New_Line_Losses_{month_name}_{year}.xlsx", output.read()))
+            except Exception as e:
+                import traceback
+                error_msg = f"Error generating New Line Losses Report: {str(e)}\n{traceback.format_exc()}\n"
+                print(error_msg)
+                errors.append(error_msg)
+             
         # 6. Daily Max MVA
         if not report_ids or 'daily-max-mva' in report_ids:
             try:
@@ -8775,6 +9080,20 @@ async def send_reports_email_endpoint(
                 print(error_msg)
                 errors.append(error_msg)
         
+        # 10. MIS Interruption Details (optional - only when explicitly requested)
+        if report_ids and 'mis-interruptions' in report_ids:
+            try:
+                wb = await _generate_mis_interruptions_report_wb(year, month)
+                output = io.BytesIO()
+                wb.save(output)
+                output.seek(0)
+                attachments.append((f"MIS_Interruption_Details_{month_name}_{year}.xlsx", output.read()))
+            except Exception as e:
+                import traceback
+                error_msg = f"Error generating MIS Interruption Details Report: {str(e)}\n{traceback.format_exc()}\n"
+                print(error_msg)
+                errors.append(error_msg)
+        
         if errors:
             error_content = "\n".join(errors)
             attachments.append(("generation_errors.txt", error_content.encode('utf-8')))
@@ -8793,10 +9112,12 @@ async def send_reports_email_endpoint(
             'boundary-meter': 'Boundary Meter reading', # Based on user example "Boundary Meter reading"
             'kpi': 'KPI',
             'line-losses': 'Line Losses',
+            'new-line-losses': 'New Line Losses',
             'daily-max-mva': 'Daily Max MVA',
             'ptr-max-min': 'PTR Max Min',
             'tl-max-loading': 'TL Max Loading',
-            'interruptions': 'Interruptions'
+            'interruptions': 'Interruptions',
+            'mis-interruptions': 'MIS Interruption Details'
         }
 
         # Identify which reports were actually generated (or attempted)
