@@ -384,7 +384,7 @@ export default function Reports() {
                 <p className="text-slate-600 dark:text-slate-400">Checking reports status...</p>
               ) : reportStatus === 'ready' ? (
                 <p className="text-green-700 dark:text-green-300 font-medium">
-                  All reports are ready. You can download and mail the reports for the selected Month and Year.
+                  {`All reports are ready. You can download and mail the reports for ${monthNames[month - 1]}-${year}.`}
                 </p>
               ) : reportStatus === 'not_ready' ? (
                 <div className="space-y-2">

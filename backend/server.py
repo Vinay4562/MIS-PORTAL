@@ -6712,13 +6712,19 @@ async def check_reports_status(
                 "date": {"$gte": start_date, "$lte": end_date}
             })
             boundary_meter_ready = actual_energy_entries >= days_in_month
+        
+        interruptions_count = await db.interruption_entries.count_documents({
+            "date": {"$gte": start_date, "$lte": end_date}
+        })
+        interruptions_ready = interruptions_count > 0
             
         # 5. Compile Status
         missing_reports = []
         
         if not line_losses_ready:
             missing_reports.append("Line Losses")
-            
+            missing_reports.append("New Line Losses Report")
+        
         if not max_min_ready:
             # These all depend on max_min data
             missing_reports.append("Fortnight")
@@ -6729,6 +6735,10 @@ async def check_reports_status(
             
         if not boundary_meter_ready:
             missing_reports.append("Boundary Meter Reading (33KV)")
+        
+        if not interruptions_ready:
+            missing_reports.append("Interruptions")
+            missing_reports.append("MIS Interruption Details")
             
         all_ready = len(missing_reports) == 0
         
