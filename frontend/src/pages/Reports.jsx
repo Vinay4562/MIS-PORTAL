@@ -23,6 +23,7 @@ const REPORTS = [
   { id: 'ptr-max-min', title: 'PTR Max–Min (Format-1)', description: 'PTR Max-Min Data Format-1' },
   { id: 'tl-max-loading', title: 'TL Max Loading (Format-4)', description: 'Transmission Line Max Loading Format-4' },
   { id: 'interruptions', title: 'Interruptions', description: 'Monthly Interruptions Report' },
+  { id: 'mis-interruptions', title: 'MIS Interruption Details', description: 'MIS Interruption Details Report' },
 ];
 
 export default function Reports() {
@@ -132,7 +133,7 @@ export default function Reports() {
   };
 
   const handlePreview = async (report) => {
-    if (['boundary-meter', 'daily-max-mva', 'kpi', 'line-losses', 'ptr-max-min', 'tl-max-loading', 'fortnight', 'interruptions'].includes(report.id)) {
+    if (['boundary-meter', 'daily-max-mva', 'kpi', 'line-losses', 'ptr-max-min', 'tl-max-loading', 'fortnight', 'interruptions', 'mis-interruptions'].includes(report.id)) {
         setPreviewReport(report);
         setPreviewOpen(true);
         setPreviewLoading(true);
@@ -156,6 +157,8 @@ export default function Reports() {
                 endpoint = `/reports/tl-max-loading-format4/preview/${year}/${month}`;
             } else if (report.id === 'interruptions') {
                 endpoint = `/reports/interruptions/preview/${year}/${month}`;
+            } else if (report.id === 'mis-interruptions') {
+                endpoint = `/reports/mis-interruptions/preview/${year}/${month}`;
             }
 
             const token = localStorage.getItem('token');
@@ -186,6 +189,7 @@ export default function Reports() {
         'ptr-max-min': `/reports/ptr-max-min-format1/export/${year}/${month}`,
         'tl-max-loading': `/reports/tl-max-loading-format4/export/${year}/${month}`,
         'interruptions': `/reports/interruptions/export/${year}/${month}`,
+        'mis-interruptions': `/reports/mis-interruptions/export/${year}/${month}`,
     };
 
     if (!endpoints[report.id]) {

@@ -639,6 +639,149 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
         );
     }
 
+    if (reportId === "mis-interruptions") {
+        const rows = Array.isArray(data?.rows) ? data.rows : [];
+
+        const monthLabels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        const monthLabel = month >= 1 && month <= 12 ? monthLabels[month - 1] : month;
+        const headerLine1 = "STATEMENT-16";
+        const headerLine2 = `PARTICULARS OF INTERRUPTIONS FOR THE MONTH OF ${monthLabel} - ${year} IN O & M-I DIVISION`;
+
+        return (
+            <div className="w-full space-y-2 mt-2">
+                <div className="text-center font-semibold text-sm">{headerLine1}</div>
+                <div className="text-center font-semibold text-sm">{headerLine2}</div>
+                <div className="border rounded-md overflow-x-auto">
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2 w-[60px]">
+                                    Sl. No
+                                </TableHead>
+                                <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2 min-w-[200px]">
+                                    Name of the feeder
+                                </TableHead>
+                                <TableHead colSpan={4} className="text-center border bg-muted h-auto py-2 min-w-[240px]">
+                                    Faulty Trippings
+                                </TableHead>
+                                <TableHead colSpan={2} className="text-center border bg-muted h-auto py-2">
+                                    Incoming Supply
+                                </TableHead>
+                                <TableHead colSpan={2} className="text-center border bg-muted h-auto py-2">
+                                    Load Relief
+                                </TableHead>
+                                <TableHead colSpan={2} className="text-center border bg-muted h-auto py-2">
+                                    Equipment Failures
+                                </TableHead>
+                                <TableHead colSpan={2} className="text-center border bg-muted h-auto py-2">
+                                    Break Downs
+                                </TableHead>
+                                <TableHead colSpan={2} className="text-center border bg-muted h-auto py-2">
+                                    Pre Arranged
+                                </TableHead>
+                                <TableHead colSpan={2} className="text-center border bg-muted h-auto py-2">
+                                    LC/NBFC
+                                </TableHead>
+                                <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2 min-w-[160px]">
+                                    Remarks
+                                </TableHead>
+                            </TableRow>
+                            <TableRow>
+                                <TableHead className="text-center border bg-muted h-auto py-2">O/L</TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-2">E/L</TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-2">Others</TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-2">Duration</TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-2">No</TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-2">Duration</TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-2">No</TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-2">Duration</TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-2">No</TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-2">Duration</TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-2">No</TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-2">Duration</TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-2">No</TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-2">Duration</TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-2">No</TableHead>
+                                <TableHead className="text-center border bg-muted h-auto py-2">Duration</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {rows && rows.length > 0 ? (
+                                rows.map((row, index) => (
+                                    <TableRow key={row.feeder_name || index}>
+                                        <TableCell className="text-center border p-2">
+                                            {row.sl_no ?? index + 1}
+                                        </TableCell>
+                                        <TableCell className="border p-2 whitespace-pre-wrap">
+                                            {row.feeder_name}
+                                        </TableCell>
+                                        <TableCell className="text-center border p-2">
+                                            {row.faulty_ol_count || ""}
+                                        </TableCell>
+                                        <TableCell className="text-center border p-2">
+                                            {row.faulty_el_count || ""}
+                                        </TableCell>
+                                        <TableCell className="text-center border p-2">
+                                            {row.faulty_other_count || ""}
+                                        </TableCell>
+                                        <TableCell className="text-center border p-2">
+                                            {row.faulty_duration || ""}
+                                        </TableCell>
+                                        <TableCell className="text-center border p-2">
+                                            {row.incoming_count || ""}
+                                        </TableCell>
+                                        <TableCell className="text-center border p-2">
+                                            {row.incoming_duration || ""}
+                                        </TableCell>
+                                        <TableCell className="text-center border p-2">
+                                            {row.load_relief_count || ""}
+                                        </TableCell>
+                                        <TableCell className="text-center border p-2">
+                                            {row.load_relief_duration || ""}
+                                        </TableCell>
+                                        <TableCell className="text-center border p-2">
+                                            {row.equipment_failures_count || ""}
+                                        </TableCell>
+                                        <TableCell className="text-center border p-2">
+                                            {row.equipment_failures_duration || ""}
+                                        </TableCell>
+                                        <TableCell className="text-center border p-2">
+                                            {row.breakdown_count || ""}
+                                        </TableCell>
+                                        <TableCell className="text-center border p-2">
+                                            {row.breakdown_duration || ""}
+                                        </TableCell>
+                                        <TableCell className="text-center border p-2">
+                                            {row.pre_arranged_count || ""}
+                                        </TableCell>
+                                        <TableCell className="text-center border p-2">
+                                            {row.pre_arranged_duration || ""}
+                                        </TableCell>
+                                        <TableCell className="text-center border p-2">
+                                            {row.lc_nbfc_count || ""}
+                                        </TableCell>
+                                        <TableCell className="text-center border p-2">
+                                            {row.lc_nbfc_duration || ""}
+                                        </TableCell>
+                                        <TableCell className="border p-2 whitespace-pre-wrap">
+                                            {row.remarks || ""}
+                                        </TableCell>
+                                    </TableRow>
+                                ))
+                            ) : (
+                                <TableRow>
+                                    <TableCell colSpan={19} className="text-center py-4">
+                                        No data available for this period.
+                                    </TableCell>
+                                </TableRow>
+                            )}
+                        </TableBody>
+                    </Table>
+                </div>
+            </div>
+        );
+    }
+
     if (title === "Line Losses" && reportId === "line-losses") {
         const rows = Array.isArray(data) ? data : data?.lines || [];
 

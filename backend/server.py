@@ -74,9 +74,17 @@ def format_duration_hhmm(value):
     except Exception:
         return str(value)
     total = int(round(minutes))
-    hours = total // 60
-    mins = total % 60
-    return f"{hours:02d}:{mins:02d}"
+    if total <= 0:
+        return ""
+    days = total // (24 * 60)
+    remaining = total % (24 * 60)
+    hours = remaining // 60
+    mins = remaining % 60
+    if days == 0:
+        return f"{hours:02d}:{mins:02d}"
+    if days == 1:
+        return f"1Day {hours:02d}:{mins:02d} Hours"
+    return f"{days}Days {hours:02d}:{mins:02d} Hours"
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -4817,15 +4825,379 @@ async def _generate_interruptions_report_wb(year: int, month: int):
                         cell.alignment = left_align
                 row_idx += 1
 
-        for col_idx in range(1, len(headers) + 1):
-            col_letter = get_column_letter(col_idx)
-            max_len = 0
-            for cell in ws[col_letter]:
-                if cell.value is not None:
-                    max_len = max(max_len, len(str(cell.value)))
-            ws.column_dimensions[col_letter].width = min(max(max_len + 2, 12), 40)
+    for col_idx in range(1, len(headers) + 1):
+        col_letter = get_column_letter(col_idx)
+        max_len = 0
+        for cell in ws[col_letter]:
+            if cell.value is not None:
+                max_len = max(max_len, len(str(cell.value)))
+        ws.column_dimensions[col_letter].width = min(max(max_len + 2, 12), 40)
 
     return wb
+
+
+async def _get_mis_interruptions_report_data(year: int, month: int):
+    start_date = f"{year}-{month:02d}-01"
+    if month == 12:
+        end_date = f"{year + 1}-01-01"
+    else:
+        end_date = f"{year}-{month + 1:02d}-01"
+
+    feeders = await db.max_min_feeders.find(
+        {"type": {"$in": ["feeder_400kv", "feeder_220kv", "ict_feeder", "reactor_feeder", "bay_feeder"]}},
+        {"_id": 0},
+    ).to_list(200)
+
+    feeders_by_id = {f["id"]: f for f in feeders if f.get("id")}
+
+    all_entries = await db.interruption_entries.find(
+        {"date": {"$gte": start_date, "$lt": end_date}},
+        {"_id": 0},
+    ).to_list(20000)
+
+    def _combined_text(entry: Dict[str, Any]) -> str:
+        data = entry.get("data") or {}
+        parts = [
+            data.get("cause_of_interruption"),
+            data.get("relay_indications_lc_work"),
+            data.get("remarks"),
+            data.get("description"),
+            data.get("action_taken"),
+        ]
+        return " ".join(str(p) for p in parts if p) or ""
+
+    def classify_category(entry: Dict[str, Any]) -> str:
+        combined = _combined_text(entry)
+        lower = combined.lower()
+        breakdown_flag = False
+        flag_val = str(data.get("breakdown_declared") or "").strip().lower()
+        if flag_val.startswith("y"):
+            breakdown_flag = True
+        if "breakdown declared" in lower or "under breakdown condition" in lower:
+            breakdown_flag = True
+        if breakdown_flag:
+            return "breakdown"
+        lc_nbfc_keywords = [
+            "lc issued",
+            "lc applied",
+            "under lc",
+            "line clear",
+            "line clear for",
+            "nbfc issued",
+            "nbfc applied",
+            "under nbfc",
+            "nbfc for",
+            "nbfc returned",
+            "hand tripped",
+            "hand trip",
+            "hand-tripped",
+        ]
+        if any(k in lower for k in lc_nbfc_keywords):
+            return "lc_nbfc_ht"
+        return "faulty_tripping"
+
+    def classify_lc_nbfc_label(entry: Dict[str, Any]) -> str:
+        combined = _combined_text(entry)
+        lower = combined.lower()
+        if "nbfc" in lower:
+            return "NBFC"
+        ht_keywords = [
+            "hand tripped",
+            "hand trip",
+            "hand-tripped",
+            " ht ",
+            "(ht",
+            "ht)",
+        ]
+        if any(k in lower for k in ht_keywords):
+            return "HT"
+        return "LC"
+
+    summary_by_feeder: Dict[str, Dict[str, Any]] = {}
+    for f in feeders:
+        fid = f.get("id")
+        if not fid:
+            continue
+        summary_by_feeder[fid] = {
+            "lc_nbfc_ht_count": 0,
+            "lc_nbfc_ht_duration": 0.0,
+            "lc_count": 0,
+            "nbfc_count": 0,
+            "ht_count": 0,
+            "breakdown_count": 0,
+            "breakdown_duration": 0.0,
+            "faulty_tripping_count": 0,
+            "faulty_tripping_duration": 0.0,
+        }
+
+    for entry in all_entries:
+        fid = entry.get("feeder_id")
+        if not fid or fid not in feeders_by_id:
+            continue
+        if fid not in summary_by_feeder:
+            continue
+        data = entry.get("data") or {}
+        duration_raw = data.get("duration_minutes") or 0
+        try:
+            minutes = float(duration_raw)
+        except Exception:
+            minutes = 0.0
+        category = classify_category(entry)
+        if category == "lc_nbfc_ht":
+            count_key = "lc_nbfc_ht_count"
+            dur_key = "lc_nbfc_ht_duration"
+            label = classify_lc_nbfc_label(entry)
+        elif category == "breakdown":
+            count_key = "breakdown_count"
+            dur_key = "breakdown_duration"
+        else:
+            count_key = "faulty_tripping_count"
+            dur_key = "faulty_tripping_duration"
+        summary = summary_by_feeder[fid]
+        summary[count_key] += 1
+        summary[dur_key] += minutes
+        if category == "lc_nbfc_ht":
+            if label == "LC":
+                summary["lc_count"] += 1
+            elif label == "NBFC":
+                summary["nbfc_count"] += 1
+            elif label == "HT":
+                summary["ht_count"] += 1
+
+    month_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    if 1 <= month <= 12:
+        month_label = month_labels[month - 1]
+    else:
+        month_label = str(month)
+
+    def section_key_for_feeder(feeder: Dict[str, Any]) -> Optional[str]:
+        ftype = feeder.get("type")
+        name = feeder.get("name", "")
+        if ftype == "feeder_400kv":
+            return "400kv"
+        if ftype == "feeder_220kv":
+            return "220kv"
+        if ftype == "ict_feeder":
+            return "ict_reactor"
+        if ftype == "reactor_feeder":
+            return "ict_reactor"
+        if ftype == "bay_feeder":
+            return "bay"
+        return None
+
+    def _build_mis_interruptions_flat_rows(
+        feeders_list: List[Dict[str, Any]],
+        summary_map: Dict[str, Dict[str, Any]],
+        section_key_fn,
+    ) -> List[Dict[str, Any]]:
+        ordered_sections = ["400kv", "220kv", "ict_reactor", "bay"]
+        feeders_by_section: Dict[str, List[Dict[str, Any]]] = {k: [] for k in ordered_sections}
+        for f in feeders_list:
+            fid = f.get("id")
+            if not fid or fid not in summary_map:
+                continue
+            skey = section_key_fn(f)
+            if not skey or skey not in feeders_by_section:
+                continue
+            feeders_by_section[skey].append(f)
+        for flist in feeders_by_section.values():
+            flist.sort(key=lambda x: x.get("name", ""))
+        rows: List[Dict[str, Any]] = []
+        sl = 1
+        for skey in ordered_sections:
+            for feeder in feeders_by_section.get(skey, []):
+                fid = feeder.get("id")
+                if not fid:
+                    continue
+                summary = summary_map.get(fid) or {}
+                faulty_count = summary.get("faulty_tripping_count", 0)
+                faulty_duration_minutes = summary.get("faulty_tripping_duration", 0.0)
+                breakdown_count = summary.get("breakdown_count", 0)
+                breakdown_duration_minutes = summary.get("breakdown_duration", 0.0)
+                lc_nbfc_count = summary.get("lc_nbfc_ht_count", 0)
+                lc_nbfc_duration_minutes = summary.get("lc_nbfc_ht_duration", 0.0)
+                lc_count = summary.get("lc_count", 0)
+                nbfc_count = summary.get("nbfc_count", 0)
+                ht_count = summary.get("ht_count", 0)
+                has_data = any(
+                    [
+                        faulty_count,
+                        faulty_duration_minutes,
+                        breakdown_count,
+                        breakdown_duration_minutes,
+                        lc_nbfc_count,
+                        lc_nbfc_duration_minutes,
+                    ]
+                )
+                if not has_data:
+                    continue
+                lc_parts: List[str] = []
+                if lc_count:
+                    lc_parts.append(f"{lc_count}(LC)")
+                if nbfc_count:
+                    lc_parts.append(f"{nbfc_count}(NBFC)")
+                if ht_count:
+                    lc_parts.append(f"{ht_count}(HT)")
+                lc_nbfc_display = "\n".join(lc_parts) if lc_parts else ""
+                rows.append(
+                    {
+                        "sl_no": sl,
+                        "feeder_name": feeder.get("name", ""),
+                        "faulty_ol_count": 0,
+                        "faulty_el_count": faulty_count,
+                        "faulty_other_count": 0,
+                        "faulty_duration": format_duration_hhmm(faulty_duration_minutes),
+                        "incoming_count": 0,
+                        "incoming_duration": "",
+                        "load_relief_count": 0,
+                        "load_relief_duration": "",
+                        "equipment_failures_count": 0,
+                        "equipment_failures_duration": "",
+                        "breakdown_count": breakdown_count,
+                        "breakdown_duration": format_duration_hhmm(breakdown_duration_minutes),
+                        "pre_arranged_count": 0,
+                        "pre_arranged_duration": "",
+                        "lc_nbfc_count": lc_nbfc_display,
+                        "lc_nbfc_duration": format_duration_hhmm(lc_nbfc_duration_minutes),
+                        "remarks": "",
+                    }
+                )
+                sl += 1
+        return rows
+
+    return {
+        "rows": _build_mis_interruptions_flat_rows(feeders, summary_by_feeder, section_key_for_feeder),
+        "month_label": month_label,
+        "year": year,
+    }
+
+
+async def _generate_mis_interruptions_report_wb(year: int, month: int):
+    from openpyxl.styles import PatternFill, Border, Side, Alignment, Font
+    from openpyxl.utils import get_column_letter
+
+    data = await _get_mis_interruptions_report_data(year, month)
+
+    thin_border = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
+    center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    header_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+    header_font = Font(bold=True, color="000000")
+
+    month_label = data.get("month_label") or ""
+    year_val = data.get("year") or year
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Statement-16"
+
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=19)
+    c1 = ws.cell(row=1, column=1, value="STATEMENT-16")
+    c1.font = Font(bold=True)
+    c1.alignment = center_align
+
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=19)
+    header_text = f"PARTICULARS OF INTERRUPTIONS FOR THE MONTH OF {month_label} - {year_val} IN O & M-I DIVISION"
+    c2 = ws.cell(row=2, column=1, value=header_text)
+    c2.font = Font(bold=True)
+    c2.alignment = center_align
+
+    ws.merge_cells(start_row=3, start_column=1, end_row=4, end_column=1)
+    ws.merge_cells(start_row=3, start_column=2, end_row=4, end_column=2)
+    ws.merge_cells(start_row=3, start_column=3, end_row=3, end_column=6)
+    ws.merge_cells(start_row=3, start_column=7, end_row=3, end_column=8)
+    ws.merge_cells(start_row=3, start_column=9, end_row=3, end_column=10)
+    ws.merge_cells(start_row=3, start_column=11, end_row=3, end_column=12)
+    ws.merge_cells(start_row=3, start_column=13, end_row=3, end_column=14)
+    ws.merge_cells(start_row=3, start_column=15, end_row=3, end_column=16)
+    ws.merge_cells(start_row=3, start_column=17, end_row=3, end_column=18)
+    ws.merge_cells(start_row=3, start_column=19, end_row=4, end_column=19)
+
+    headers = {
+        (3, 1): "Sl. No",
+        (3, 2): "Name of the feeder",
+        (3, 3): "Faulty Trippings",
+        (3, 7): "Incoming Supply",
+        (3, 9): "Load Relief",
+        (3, 11): "Equipment Failures",
+        (3, 13): "Break Downs",
+        (3, 15): "Pre Arranged",
+        (3, 17): "LC/NBFC",
+        (3, 19): "Remarks",
+        (4, 3): "O/L",
+        (4, 4): "E/L",
+        (4, 5): "Others",
+        (4, 6): "Duration",
+        (4, 7): "No",
+        (4, 8): "Duration",
+        (4, 9): "No",
+        (4, 10): "Duration",
+        (4, 11): "No",
+        (4, 12): "Duration",
+        (4, 13): "No",
+        (4, 14): "Duration",
+        (4, 15): "No",
+        (4, 16): "Duration",
+        (4, 17): "No",
+        (4, 18): "Duration",
+    }
+
+    for (row_idx, col_idx), value in headers.items():
+        cell = ws.cell(row=row_idx, column=col_idx, value=value)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = center_align
+        cell.border = thin_border
+
+    row_idx = 5
+    rows = data.get("rows") or []
+    if not rows:
+        ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=19)
+        cell = ws.cell(row=row_idx, column=1, value="No interruptions found for this period")
+        cell.alignment = center_align
+        cell.border = thin_border
+    else:
+        for row in rows:
+            values = [
+                row.get("sl_no"),
+                row.get("feeder_name"),
+                row.get("faulty_ol_count"),
+                row.get("faulty_el_count"),
+                row.get("faulty_other_count"),
+                row.get("faulty_duration"),
+                row.get("incoming_count"),
+                row.get("incoming_duration"),
+                row.get("load_relief_count"),
+                row.get("load_relief_duration"),
+                row.get("equipment_failures_count"),
+                row.get("equipment_failures_duration"),
+                row.get("breakdown_count"),
+                row.get("breakdown_duration"),
+                row.get("pre_arranged_count"),
+                row.get("pre_arranged_duration"),
+                row.get("lc_nbfc_count"),
+                row.get("lc_nbfc_duration"),
+                row.get("remarks"),
+            ]
+            for col_idx, val in enumerate(values, 1):
+                cell = ws.cell(row=row_idx, column=col_idx, value=val)
+                cell.border = thin_border
+                if col_idx in [1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]:
+                    cell.alignment = center_align
+                else:
+                    cell.alignment = left_align
+            row_idx += 1
+
+    for col_idx in range(1, 20):
+        col_letter = get_column_letter(col_idx)
+        max_len = 0
+        for cell in ws[col_letter]:
+            if cell.value is not None:
+                max_len = max(max_len, len(str(cell.value)))
+        ws.column_dimensions[col_letter].width = min(max(max_len + 2, 10), 30)
+
+    return wb
+
 
 async def _generate_fortnight_report_wb(year: int, month: int):
     try:
@@ -8205,6 +8577,51 @@ async def export_interruptions_report(
         output.seek(0)
 
         filename = f"Interruptions_Report_{month_name}_{year}.xlsx"
+
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        import traceback
+        error_msg = traceback.format_exc()
+        print(error_msg)
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+@api_router.get("/reports/mis-interruptions/preview/{year}/{month}")
+async def preview_mis_interruptions_report(
+    year: int,
+    month: int,
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        data = await _get_mis_interruptions_report_data(year, month)
+        return data
+    except Exception as e:
+        import traceback
+        error_msg = traceback.format_exc()
+        print(error_msg)
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+@api_router.get("/reports/mis-interruptions/export/{year}/{month}")
+async def export_mis_interruptions_report(
+    year: int,
+    month: int,
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        import calendar
+        wb = await _generate_mis_interruptions_report_wb(year, month)
+        month_name = calendar.month_name[month]
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        filename = f"MIS_Interruption_Details_{month_name}_{year}.xlsx"
 
         return StreamingResponse(
             output,
