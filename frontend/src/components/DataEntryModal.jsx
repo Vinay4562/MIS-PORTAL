@@ -39,6 +39,7 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, d
   const [loading, setLoading] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const firstInputRef = useRef(null);
+  const [fieldErrors, setFieldErrors] = useState({});
 
   const fetchPreviousEntry = useCallback(async (date) => {
     try {
@@ -92,6 +93,7 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, d
     if (selectedDate) {
       fetchPreviousEntry(selectedDate);
     }
+    setFieldErrors({});
   }, [feeder.id, fetchPreviousEntry, selectedDate, entries]);
 
   const handlePrevDate = () => {
@@ -118,6 +120,23 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, d
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const newErrors = {};
+    const checkField = (initialField, finalValue, key) => {
+      const initialVal = parseFloat(getInitialValue(initialField) || '0');
+      const finalVal = parseFloat(finalValue);
+      if (!isNaN(initialVal) && !isNaN(finalVal) && finalVal < initialVal) {
+        newErrors[key] = true;
+      }
+    };
+    checkField('end1_import_final', end1ImportFinal, 'end1ImportFinal');
+    checkField('end1_export_final', end1ExportFinal, 'end1ExportFinal');
+    checkField('end2_import_final', end2ImportFinal, 'end2ImportFinal');
+    checkField('end2_export_final', end2ExportFinal, 'end2ExportFinal');
+    if (Object.keys(newErrors).length > 0) {
+      setFieldErrors(newErrors);
+      toast.warning('Please check the data properly.');
+      return;
+    }
     setLoading(true);
 
     try {
@@ -230,10 +249,23 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, d
                   type="number"
                   step="0.01"
                   value={end1ImportFinal}
-                  onChange={(e) => setEnd1ImportFinal(e.target.value)}
+                  onChange={(e) => {
+                    setEnd1ImportFinal(e.target.value);
+                    setFieldErrors(prev => {
+                      const copy = {...prev};
+                      delete copy.end1ImportFinal;
+                      return copy;
+                    });
+                  }}
                   required
                   data-testid="end1-import-final"
+                  className={fieldErrors.end1ImportFinal ? 'border-red-500 focus-visible:ring-red-500' : ''}
                 />
+                {fieldErrors.end1ImportFinal && (
+                  <p className="mt-1 text-xs text-red-600">
+                    Please check the data properly.
+                  </p>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -257,10 +289,23 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, d
                   type="number"
                   step="0.01"
                   value={end1ExportFinal}
-                  onChange={(e) => setEnd1ExportFinal(e.target.value)}
+                  onChange={(e) => {
+                    setEnd1ExportFinal(e.target.value);
+                    setFieldErrors(prev => {
+                      const copy = {...prev};
+                      delete copy.end1ExportFinal;
+                      return copy;
+                    });
+                  }}
                   required
                   data-testid="end1-export-final"
+                  className={fieldErrors.end1ExportFinal ? 'border-red-500 focus-visible:ring-red-500' : ''}
                 />
+                {fieldErrors.end1ExportFinal && (
+                  <p className="mt-1 text-xs text-red-600">
+                    Please check the data properly.
+                  </p>
+                )}
               </div>
             </div>
             <div className="text-xs text-slate-500">
@@ -294,10 +339,23 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, d
                   type="number"
                   step="0.01"
                   value={end2ImportFinal}
-                  onChange={(e) => setEnd2ImportFinal(e.target.value)}
+                  onChange={(e) => {
+                    setEnd2ImportFinal(e.target.value);
+                    setFieldErrors(prev => {
+                      const copy = {...prev};
+                      delete copy.end2ImportFinal;
+                      return copy;
+                    });
+                  }}
                   required
                   data-testid="end2-import-final"
+                  className={fieldErrors.end2ImportFinal ? 'border-red-500 focus-visible:ring-red-500' : ''}
                 />
+                {fieldErrors.end2ImportFinal && (
+                  <p className="mt-1 text-xs text-red-600">
+                    Please check the data properly.
+                  </p>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -321,10 +379,23 @@ export default function DataEntryModal({ isOpen, onClose, feeder, year, month, d
                   type="number"
                   step="0.01"
                   value={end2ExportFinal}
-                  onChange={(e) => setEnd2ExportFinal(e.target.value)}
+                  onChange={(e) => {
+                    setEnd2ExportFinal(e.target.value);
+                    setFieldErrors(prev => {
+                      const copy = {...prev};
+                      delete copy.end2ExportFinal;
+                      return copy;
+                    });
+                  }}
                   required
                   data-testid="end2-export-final"
+                  className={fieldErrors.end2ExportFinal ? 'border-red-500 focus-visible:ring-red-500' : ''}
                 />
+                {fieldErrors.end2ExportFinal && (
+                  <p className="mt-1 text-xs text-red-600">
+                    Please check the data properly.
+                  </p>
+                )}
               </div>
             </div>
             <div className="text-xs text-slate-500">

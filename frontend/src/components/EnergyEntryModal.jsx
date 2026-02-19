@@ -22,11 +22,12 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, year, month, 
       }
       return `${year}-${String(month).padStart(2, '0')}-01`;
   });
-  const [readings, setReadings] = useState({}); // { meterId: finalValue }
+  const [readings, setReadings] = useState({});
   const [previousEntry, setPreviousEntry] = useState(null);
   const [loading, setLoading] = useState(false);
   const [currentEntry, setCurrentEntry] = useState(entry);
   const firstInputRef = useRef(null);
+  const [errors, setErrors] = useState({});
 
   // Calculate constraints
   const strMonth = month.toString().padStart(2, '0');
@@ -60,6 +61,7 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, year, month, 
             setReadings({});
         }
         setPreviousEntry(null);
+        setErrors({});
     }
   }, [isOpen, entry, sheet.id, year, month, defaultDate]);
   
@@ -152,6 +154,19 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, year, month, 
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    const newErrors = {};
+    (sheet.meters || []).forEach(meter => {
+      const initialVal = parseFloat(getInitialValue(meter.id) || '0');
+      const finalVal = parseFloat(readings[meter.id]);
+      if (!isNaN(initialVal) && !isNaN(finalVal) && finalVal < initialVal) {
+        newErrors[meter.id] = true;
+      }
+    });
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
+      toast.warning('Please check the data properly.');
+      return;
+    }
     setLoading(true);
     
     try {
@@ -256,10 +271,23 @@ export default function EnergyEntryModal({ isOpen, onClose, sheet, year, month, 
                                     step="0.01" 
                                     placeholder="Final"
                                     value={readings[meter.id] || ''}
-                                    onChange={e => setReadings(prev => ({...prev, [meter.id]: e.target.value}))}
+                                    onChange={e => {
+                                      const value = e.target.value;
+                                      setReadings(prev => ({...prev, [meter.id]: value}));
+                                      setErrors(prev => {
+                                        const copy = {...prev};
+                                        delete copy[meter.id];
+                                        return copy;
+                                      });
+                                    }}
                                     required
-                                    className="font-medium"
+                                    className={`font-medium ${errors[meter.id] ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
                                 />
+                                {errors[meter.id] && (
+                                  <p className="mt-1 text-xs text-red-600">
+                                    Please check the data properly.
+                                  </p>
+                                )}
                             </div>
                         </div>
                     ))}

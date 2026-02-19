@@ -22,6 +22,13 @@ import {
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
+const formatUpdatedDate = (isoDate) => {
+  if (!isoDate) return '';
+  const [year, month, day] = isoDate.split('-');
+  if (!year || !month || !day) return isoDate;
+  return `${day}-${month}-${year}`;
+};
+
 const formatTime = (t) => {
   if (!t) return '';
   const str = String(t).trim();
@@ -649,6 +656,11 @@ export default function MaxMinData() {
               <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 ring-4 ring-emerald-50"></span>
               {monthNames[month - 1]} {year}
             </p>
+            {dailyStatus?.latest_entry_date && (
+              <p className="mt-1 inline-flex items-center text-xs md:text-sm font-semibold text-emerald-700 bg-emerald-50 dark:bg-emerald-900/40 px-2 py-1 rounded-md border border-emerald-200 dark:border-emerald-700">
+                Data Updated: Upto {formatUpdatedDate(dailyStatus.latest_entry_date)}
+              </p>
+            )}
           </div>
 
           <div className="md:hidden">

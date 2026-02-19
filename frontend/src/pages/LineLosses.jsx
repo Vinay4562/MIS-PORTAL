@@ -22,6 +22,13 @@ import {
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
+const formatUpdatedDate = (isoDate) => {
+  if (!isoDate) return '';
+  const [year, month, day] = isoDate.split('-');
+  if (!year || !month || !day) return isoDate;
+  return `${day}-${month}-${year}`;
+};
+
 const FEEDER_ORDER = [
   "400 KV Shankarpally-MHRM-2",
   "400 KV Shankarpally-MHRM-1",
@@ -489,6 +496,11 @@ export default function LineLosses() {
             <p className="text-sm md:text-base text-slate-600 dark:text-slate-400 mt-1">
               {monthNames[month - 1]} {year}
             </p>
+            {dailyStatus?.latest_entry_date && (
+              <p className="mt-1 inline-flex items-center text-xs md:text-sm font-semibold text-emerald-700 bg-emerald-50 dark:bg-emerald-900/40 px-2 py-1 rounded-md border border-emerald-200 dark:border-emerald-700">
+                Data Updated: Upto {formatUpdatedDate(dailyStatus.latest_entry_date)}
+              </p>
+            )}
           </div>
 
           <div className="md:hidden">

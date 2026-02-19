@@ -192,7 +192,7 @@ export default function DashboardLayout({ children }) {
       <aside
         onMouseEnter={() => setIsCollapsed(false)}
         onMouseLeave={() => setIsCollapsed(true)}
-        className={`hidden md:flex ${isCollapsed ? 'w-20' : 'w-64'} bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex-col transition-all duration-300`}
+        className={`hidden md:flex ${isCollapsed ? 'w-20' : 'w-64'} bg-white dark:bg-slate-800 border-r border-slate-200 dark:border-slate-700 flex-col`}
       >
         <SidebarContent collapsed={isCollapsed} />
       </aside>

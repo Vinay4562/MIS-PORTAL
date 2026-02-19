@@ -9207,6 +9207,16 @@ async def check_daily_status(current_user: User = Depends(get_current_user)) -> 
 
         entered_feeder_ids = {e["feeder_id"] for e in line_losses_entries}
 
+        latest_line_entry = await db.entries.find_one(
+            {
+                "feeder_id": {"$in": feeder_ids},
+                "date": {"$lte": today_str},
+            },
+            {"date": 1, "_id": 0},
+            sort=[("date", -1)],
+        )
+        latest_line_date = latest_line_entry["date"] if latest_line_entry and latest_line_entry.get("date") else None
+
         # Group missing feeders by category so that when ALL feeders in a
         # category are pending we show a single aggregated label instead of
         # listing every feeder name.
@@ -9251,6 +9261,7 @@ async def check_daily_status(current_user: User = Depends(get_current_user)) -> 
             "complete": len(missing_line_labels) == 0,
             "missing_feeders": missing_line_labels,
             "missing_dates": [],
+            "latest_entry_date": latest_line_date,
         }
         
         # If no entries for today, check last 2 days
@@ -9279,6 +9290,20 @@ async def check_daily_status(current_user: User = Depends(get_current_user)) -> 
 
         entered_sheet_ids = {e["sheet_id"] for e in energy_entries}
 
+        latest_energy_entry = await db.energy_entries.find_one(
+            {
+                "sheet_id": {"$in": sheet_ids},
+                "date": {"$lte": today_str},
+            },
+            {"date": 1, "_id": 0},
+            sort=[("date", -1)],
+        )
+        latest_energy_date = (
+            latest_energy_entry["date"]
+            if latest_energy_entry and latest_energy_entry.get("date")
+            else None
+        )
+
         # Group ICT sheets so that when all ICT sheets are pending we show
         # "All ICT’s" instead of listing ICT-1..4 individually.
         ict_sheet_ids = [s["id"] for s in sheets if (s["name"] or "").upper().startswith("ICT-")]
@@ -9304,6 +9329,7 @@ async def check_daily_status(current_user: User = Depends(get_current_user)) -> 
             "complete": len(missing_sheet_labels) == 0,
             "missing_sheets": missing_sheet_labels,
             "missing_dates": [],
+            "latest_entry_date": latest_energy_date,
         }
         
         if len(entered_sheet_ids) == 0:
@@ -9345,6 +9371,20 @@ async def check_daily_status(current_user: User = Depends(get_current_user)) -> 
         ).to_list(None)
 
         entered_mm_ids = {e["feeder_id"] for e in mm_entries}
+
+        latest_mm_entry = await db.max_min_entries.find_one(
+            {
+                "feeder_id": {"$in": mm_feeder_ids},
+                "date": {"$lte": today_str},
+            },
+            {"date": 1, "_id": 0},
+            sort=[("date", -1)],
+        )
+        latest_mm_date = (
+            latest_mm_entry["date"]
+            if latest_mm_entry and latest_mm_entry.get("date")
+            else None
+        )
 
         # Group Max–Min feeders by type (400KV, 220KV, ICT) and aggregate when
         # all feeders in a category are pending.
@@ -9389,6 +9429,7 @@ async def check_daily_status(current_user: User = Depends(get_current_user)) -> 
             "complete": len(missing_mm_labels) == 0,
             "missing_feeders": missing_mm_labels,
             "missing_dates": [],
+            "latest_entry_date": latest_mm_date,
         }
         
         if len(entered_mm_ids) == 0:
