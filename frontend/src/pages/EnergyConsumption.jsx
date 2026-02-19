@@ -42,6 +42,7 @@ export default function EnergyConsumption() {
   const [dailyReportRawDate, setDailyReportRawDate] = useState(null);
   const [maxDailyDate, setMaxDailyDate] = useState(null);
   const [showStickySheet, setShowStickySheet] = useState(false);
+  const [showCompletionDialog, setShowCompletionDialog] = useState(false);
   const sheetSelectorRef = useRef(null);
 
   useEffect(() => {
@@ -281,12 +282,23 @@ export default function EnergyConsumption() {
 
   const handleEntryCreated = (newEntry) => {
     const isNewEntry = !editingEntry;
-    fetchEntries(selectedSheet.id, year, month);
+    const currentSheet = selectedSheet;
+    if (!currentSheet) {
+      fetchDailyStatus();
+      return;
+    }
+    fetchEntries(currentSheet.id, year, month);
     toast.success('Data Saved');
     setEditingEntry(null);
     fetchDailyStatus();
     if (isNewEntry) {
-      goToNextSheet();
+      const idx = sheets.findIndex(s => s.id === currentSheet.id);
+      const isLastSheet = idx !== -1 && idx === sheets.length - 1;
+      if (isLastSheet) {
+        setShowCompletionDialog(true);
+      } else {
+        goToNextSheet();
+      }
     }
   };
 
@@ -713,6 +725,36 @@ export default function EnergyConsumption() {
           </DialogContent>
         </Dialog>
       )}
+
+      <Dialog open={showCompletionDialog} onOpenChange={setShowCompletionDialog}>
+        <DialogContent className="max-w-md animate-in fade-in zoom-in duration-300">
+          <DialogHeader>
+            <DialogTitle>All entries completed successfully</DialogTitle>
+          </DialogHeader>
+          <DialogFooter className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowCompletionDialog(false);
+                setIsModalOpen(false);
+                setEditingEntry(null);
+              }}
+            >
+              Close
+            </Button>
+            <Button
+              onClick={async () => {
+                setShowCompletionDialog(false);
+                setIsModalOpen(false);
+                setEditingEntry(null);
+                await handleDailyReport();
+              }}
+            >
+              Daily Report
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <ReportPreviewModal 
         isOpen={showDailyReport}

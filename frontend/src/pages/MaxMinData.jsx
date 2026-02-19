@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
  import { Download, Plus, Calendar, RefreshCcw, Upload, ChevronLeft, ChevronRight, MoreHorizontal, FileText, Edit, Trash2 } from 'lucide-react';
 import { ReportPreviewModal } from '@/components/ReportPreviewModal';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { formatDate, downloadFile } from '@/lib/utils';
 import MaxMinEntryModal from '@/components/MaxMinEntryModal';
 import MaxMinAnalytics from '@/components/MaxMinAnalytics';
@@ -101,6 +102,7 @@ export default function MaxMinData() {
   const fileInputRef = useRef(null);
   const [showStickyFeeder, setShowStickyFeeder] = useState(false);
   const feederSelectorRef = useRef(null);
+  const [showCompletionDialog, setShowCompletionDialog] = useState(false);
 
   useEffect(() => {
     initializeModule();
@@ -423,7 +425,17 @@ export default function MaxMinData() {
       setEditingEntry(null);
       fetchDailyStatus();
       if (isNewEntry) {
-        goToNextFeeder();
+        const sorted = getSortedFeeders();
+        const currentFeeder = selectedFeeder;
+        if (currentFeeder) {
+          const idx = sorted.findIndex(f => f.id === currentFeeder.id);
+          const isLastFeeder = idx !== -1 && idx === sorted.length - 1;
+          if (isLastFeeder) {
+            setShowCompletionDialog(true);
+          } else {
+            goToNextFeeder();
+          }
+        }
       }
     } catch (error) {
       console.error('Failed to save entry:', error);
@@ -1003,6 +1015,37 @@ export default function MaxMinData() {
         onNext={handleNextDailyReport}
         hasNext={dailyReportRawDate && maxDailyDate ? dailyReportRawDate < maxDailyDate : false}
       />
+
+      {/* Completion Popup */}
+      <Dialog open={showCompletionDialog} onOpenChange={setShowCompletionDialog}>
+        <DialogContent className="max-w-md animate-in fade-in zoom-in duration-300">
+          <DialogHeader>
+            <DialogTitle>All entries completed successfully</DialogTitle>
+          </DialogHeader>
+          <DialogFooter className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowCompletionDialog(false);
+                setIsModalOpen(false);
+                setEditingEntry(null);
+              }}
+            >
+              Close
+            </Button>
+            <Button
+              onClick={async () => {
+                setShowCompletionDialog(false);
+                setIsModalOpen(false);
+                setEditingEntry(null);
+                await handleDailyReport();
+              }}
+            >
+              Daily Report
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

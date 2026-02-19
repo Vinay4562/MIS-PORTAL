@@ -10,6 +10,7 @@ import FeederTable from '@/components/FeederTable';
 import AnalyticsCharts from '@/components/AnalyticsCharts';
 import { Download, Plus, Calendar, RefreshCcw, Upload, ChevronLeft, ChevronRight, MoreHorizontal, FileText } from 'lucide-react';
 import { ReportPreviewModal } from '@/components/ReportPreviewModal';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { downloadFile } from '@/lib/utils';
 import { FullPageLoader } from '@/components/ui/loader';
 import {
@@ -61,6 +62,7 @@ export default function LineLosses() {
   const fileInputRef = useRef(null);
   const [showStickyFeeder, setShowStickyFeeder] = useState(false);
   const feederSelectorRef = useRef(null);
+  const [showCompletionDialog, setShowCompletionDialog] = useState(false);
 
   useEffect(() => {
     initializeFeeders();
@@ -286,10 +288,19 @@ export default function LineLosses() {
   };
 
   const handleEntryCreated = (newEntry) => {
+    const sorted = getSortedFeeders();
+    const currentFeeder = selectedFeeder;
     setEntries([...entries, newEntry].sort((a, b) => a.date.localeCompare(b.date)));
     toast.success('Data Saved');
     fetchDailyStatus();
-    goToNextFeeder();
+    if (!currentFeeder) return;
+    const idx = sorted.findIndex(f => f.id === currentFeeder.id);
+    const isLastFeeder = idx !== -1 && idx === sorted.length - 1;
+    if (isLastFeeder) {
+      setShowCompletionDialog(true);
+    } else {
+      goToNextFeeder();
+    }
   };
 
   const handleEntryUpdated = (updatedEntry) => {
@@ -723,6 +734,35 @@ export default function LineLosses() {
           hasNext={dailyReportRawDate && maxDailyDate ? dailyReportRawDate < maxDailyDate : false}
         />
       )}
+
+      {/* Completion Popup */}
+      <Dialog open={showCompletionDialog} onOpenChange={setShowCompletionDialog}>
+        <DialogContent className="max-w-md animate-in fade-in zoom-in duration-300">
+          <DialogHeader>
+            <DialogTitle>All entries completed successfully</DialogTitle>
+          </DialogHeader>
+          <DialogFooter className="flex justify-end gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowCompletionDialog(false);
+                setIsModalOpen(false);
+              }}
+            >
+              Close
+            </Button>
+            <Button
+              onClick={async () => {
+                setShowCompletionDialog(false);
+                setIsModalOpen(false);
+                await handleDailyReport();
+              }}
+            >
+              Daily Report
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
