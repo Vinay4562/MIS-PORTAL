@@ -2641,7 +2641,7 @@ async def import_energy_entries(payload: EnergyImportPayload, current_user: User
 @api_router.post("/max-min/init")
 async def init_max_min_feeders(current_user: User = Depends(get_current_user)):
     feeders_data = [
-        {"name": "Bus + Station", "type": "bus_station"},
+        {"name": "Bus Voltages & Station Load", "type": "bus_station"},
         {"name": "400KV MAHESHWARAM-1", "type": "feeder_400kv"},
         {"name": "400KV MAHESHWARAM-2", "type": "feeder_400kv"},
         {"name": "400KV NARSAPUR-1", "type": "feeder_400kv"},
@@ -6028,15 +6028,14 @@ async def check_reports_status(
         line_losses_ready = actual_entries >= expected_entries
         
         # 3. Check Max Min Reports (max_min_entries)
-        # Count active max_min_feeders
-        num_max_min_feeders = await db.max_min_feeders.count_documents({})
-        expected_max_min_entries = num_max_min_feeders * days_in_month
-        
-        actual_max_min_entries = await db.max_min_entries.count_documents({
-            "date": {"$gte": start_date, "$lte": end_date}
-        })
-        
-        max_min_ready = actual_max_min_entries >= expected_max_min_entries
+        # For report readiness we only require that each day of the month
+        # has at least one Max–Min entry (for any feeder), not that
+        # every feeder has data for every single day.
+        max_min_dates = await db.max_min_entries.distinct(
+            "date",
+            {"date": {"$gte": start_date, "$lte": end_date}},
+        )
+        max_min_ready = len(max_min_dates) >= days_in_month
         
         # 4. Check Boundary Meter (energy_entries - 33KV)
         sheet_33kv = await db.energy_sheets.find_one({"name": "33KV"})
@@ -8096,21 +8095,63 @@ async def check_daily_status(current_user: User = Depends(get_current_user)) -> 
         
         # 1. Line Losses
         feeders = await db.feeders.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(None)
-        feeder_ids = [f['id'] for f in feeders]
-        feeder_map = {f['id']: f['name'] for f in feeders}
-        
-        line_losses_entries = await db.entries.find({
-            "date": today_str,
-            "feeder_id": {"$in": feeder_ids}
-        }, {"feeder_id": 1}).to_list(None)
-        
-        entered_feeder_ids = {e['feeder_id'] for e in line_losses_entries}
-        missing_line_losses = [feeder_map[fid] for fid in feeder_ids if fid not in entered_feeder_ids]
-        
+        feeder_ids = [f["id"] for f in feeders]
+        feeder_map = {f["id"]: f["name"] for f in feeders}
+
+        line_losses_entries = await db.entries.find(
+            {
+                "date": today_str,
+                "feeder_id": {"$in": feeder_ids},
+            },
+            {"feeder_id": 1},
+        ).to_list(None)
+
+        entered_feeder_ids = {e["feeder_id"] for e in line_losses_entries}
+
+        # Group missing feeders by category so that when ALL feeders in a
+        # category are pending we show a single aggregated label instead of
+        # listing every feeder name.
+        def _line_category(name: str) -> str:
+            upper = (name or "").upper()
+            if upper.startswith("400 KV ") or upper.startswith("400KV "):
+                return "400KV"
+            if upper.startswith("220 KV ") or upper.startswith("220KV "):
+                return "220KV"
+            if "ICT" in upper:
+                return "ICT"
+            return "OTHER"
+
+        line_cat_feeders: dict[str, list[str]] = {"400KV": [], "220KV": [], "ICT": [], "OTHER": []}
+        for f in feeders:
+            cat = _line_category(f["name"])
+            if cat not in line_cat_feeders:
+                line_cat_feeders[cat] = []
+            line_cat_feeders[cat].append(f["id"])
+
+        missing_line_labels: list[str] = []
+        for cat, ids in line_cat_feeders.items():
+            if not ids:
+                continue
+            missing_ids = [fid for fid in ids if fid not in entered_feeder_ids]
+            if not missing_ids:
+                continue
+            if len(missing_ids) == len(ids):
+                if cat == "400KV":
+                    missing_line_labels.append("All 400KV Feeders")
+                    continue
+                if cat == "220KV":
+                    missing_line_labels.append("All 220KV Feeders")
+                    continue
+                if cat == "ICT":
+                    missing_line_labels.append("All ICT’s")
+                    continue
+            # Partial category or OTHER: list individual names
+            missing_line_labels.extend(feeder_map[fid] for fid in missing_ids)
+
         line_losses_status = {
-            "complete": len(missing_line_losses) == 0,
-            "missing_feeders": missing_line_losses,
-            "missing_dates": []
+            "complete": len(missing_line_labels) == 0,
+            "missing_feeders": missing_line_labels,
+            "missing_dates": [],
         }
         
         # If no entries for today, check last 2 days
@@ -8126,21 +8167,44 @@ async def check_daily_status(current_user: User = Depends(get_current_user)) -> 
 
         # 2. Energy Consumption
         sheets = await db.energy_sheets.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(None)
-        sheet_ids = [s['id'] for s in sheets]
-        sheet_map = {s['id']: s['name'] for s in sheets}
-        
-        energy_entries = await db.energy_entries.find({
-            "date": today_str,
-            "sheet_id": {"$in": sheet_ids}
-        }, {"sheet_id": 1}).to_list(None)
-        
-        entered_sheet_ids = {e['sheet_id'] for e in energy_entries}
-        missing_energy = [sheet_map[sid] for sid in sheet_ids if sid not in entered_sheet_ids]
-        
+        sheet_ids = [s["id"] for s in sheets]
+        sheet_map = {s["id"]: s["name"] for s in sheets}
+
+        energy_entries = await db.energy_entries.find(
+            {
+                "date": today_str,
+                "sheet_id": {"$in": sheet_ids},
+            },
+            {"sheet_id": 1},
+        ).to_list(None)
+
+        entered_sheet_ids = {e["sheet_id"] for e in energy_entries}
+
+        # Group ICT sheets so that when all ICT sheets are pending we show
+        # "All ICT’s" instead of listing ICT-1..4 individually.
+        ict_sheet_ids = [s["id"] for s in sheets if (s["name"] or "").upper().startswith("ICT-")]
+        other_sheet_ids = [s["id"] for s in sheets if s["id"] not in ict_sheet_ids]
+
+        missing_sheet_labels: list[str] = []
+
+        # ICT group
+        if ict_sheet_ids:
+            ict_missing_ids = [sid for sid in ict_sheet_ids if sid not in entered_sheet_ids]
+            if ict_missing_ids:
+                if len(ict_missing_ids) == len(ict_sheet_ids):
+                    missing_sheet_labels.append("All ICT’s")
+                else:
+                    missing_sheet_labels.extend(sheet_map[sid] for sid in ict_missing_ids)
+
+        # Other sheets (e.g. 33KV) always listed individually
+        for sid in other_sheet_ids:
+            if sid not in entered_sheet_ids:
+                missing_sheet_labels.append(sheet_map[sid])
+
         energy_status = {
-            "complete": len(missing_energy) == 0,
-            "missing_sheets": missing_energy,
-             "missing_dates": []
+            "complete": len(missing_sheet_labels) == 0,
+            "missing_sheets": missing_sheet_labels,
+            "missing_dates": [],
         }
         
         if len(entered_sheet_ids) == 0:
@@ -8152,22 +8216,80 @@ async def check_daily_status(current_user: User = Depends(get_current_user)) -> 
                  energy_status["missing_dates"] = [yesterday_str, today_str]
 
         # 3. Max-Min Data
-        mm_feeders = await db.max_min_feeders.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(None)
-        mm_feeder_ids = [f['id'] for f in mm_feeders]
-        mm_feeder_map = {f['id']: f['name'] for f in mm_feeders}
-        
-        mm_entries = await db.max_min_entries.find({
-            "date": today_str,
-            "feeder_id": {"$in": mm_feeder_ids}
-        }, {"feeder_id": 1}).to_list(None)
-        
-        entered_mm_ids = {e['feeder_id'] for e in mm_entries}
-        missing_mm = [mm_feeder_map[fid] for fid in mm_feeder_ids if fid not in entered_mm_ids]
-        
+        mm_feeders = await db.max_min_feeders.find(
+            {},
+            {"_id": 0, "id": 1, "name": 1, "type": 1},
+        ).to_list(None)
+
+        # Exclude Bus + Station (legacy), 125MVAR Bus Reactor and all bay feeders
+        # from the reminder logic, since Max–Min data is not entered for these.
+        def _include_mm_feeder(f: dict) -> bool:
+            t = f.get("type")
+            name = f.get("name") or ""
+            if t == "bay_feeder":
+                return False
+            if name in ["Bus + Station", "125MVAR Bus Reactor"]:
+                return False
+            return True
+
+        mm_feeders = [f for f in mm_feeders if _include_mm_feeder(f)]
+
+        mm_feeder_ids = [f["id"] for f in mm_feeders]
+        mm_feeder_map = {f["id"]: f["name"] for f in mm_feeders}
+
+        mm_entries = await db.max_min_entries.find(
+            {
+                "date": today_str,
+                "feeder_id": {"$in": mm_feeder_ids},
+            },
+            {"feeder_id": 1},
+        ).to_list(None)
+
+        entered_mm_ids = {e["feeder_id"] for e in mm_entries}
+
+        # Group Max–Min feeders by type (400KV, 220KV, ICT) and aggregate when
+        # all feeders in a category are pending.
+        def _mm_category(feeder: dict) -> str:
+            t = feeder.get("type")
+            if t == "feeder_400kv":
+                return "400KV"
+            if t == "feeder_220kv":
+                return "220KV"
+            if t == "ict_feeder":
+                return "ICT"
+            return "OTHER"
+
+        mm_cat_feeders: dict[str, list[str]] = {"400KV": [], "220KV": [], "ICT": [], "OTHER": []}
+        for f in mm_feeders:
+            cat = _mm_category(f)
+            if cat not in mm_cat_feeders:
+                mm_cat_feeders[cat] = []
+            mm_cat_feeders[cat].append(f["id"])
+
+        missing_mm_labels: list[str] = []
+        for cat, ids in mm_cat_feeders.items():
+            if not ids:
+                continue
+            missing_ids = [fid for fid in ids if fid not in entered_mm_ids]
+            if not missing_ids:
+                continue
+            if len(missing_ids) == len(ids):
+                if cat == "400KV":
+                    missing_mm_labels.append("All 400KV Feeders")
+                    continue
+                if cat == "220KV":
+                    missing_mm_labels.append("All 220KV Feeders")
+                    continue
+                if cat == "ICT":
+                    missing_mm_labels.append("All ICT’s")
+                    continue
+            # Partial category or OTHER: list individual names
+            missing_mm_labels.extend(mm_feeder_map[fid] for fid in missing_ids)
+
         max_min_status = {
-            "complete": len(missing_mm) == 0,
-            "missing_feeders": missing_mm,
-            "missing_dates": []
+            "complete": len(missing_mm_labels) == 0,
+            "missing_feeders": missing_mm_labels,
+            "missing_dates": [],
         }
         
         if len(entered_mm_ids) == 0:

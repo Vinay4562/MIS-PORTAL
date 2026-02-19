@@ -244,7 +244,10 @@ export default function MaxMinData() {
       await axios.post(`${API}/max-min/init`);
       const response = await axios.get(`${API}/max-min/feeders`);
       const usable = (response.data || []).filter(
-        f => f.type !== 'bus_station' && f.type !== 'reactor_feeder' && f.type !== 'bay_feeder'
+        f =>
+          f.type !== 'reactor_feeder' &&
+          f.type !== 'bay_feeder' &&
+          !(f.type === 'bus_station' && f.name === 'Bus + Station')
       );
       setFeeders(usable);
       setInitialized(true);
