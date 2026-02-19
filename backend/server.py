@@ -1321,18 +1321,23 @@ def _build_feeder_aliases(feeder_name: str):
     parts = clean.split()
     if parts:
         aliases.add(" ".join(parts))
+    suffix = None
+    if "-1" in name_lower:
+        suffix = "-1"
+    elif "-2" in name_lower:
+        suffix = "-2"
     if "nizamabad" in name_lower:
         aliases.add(name_lower.replace("nizamabad", "nizambad"))
-        aliases.add("nizambad-1")
-        aliases.add("nizambad-2")
+        if suffix:
+            aliases.add(f"nizambad{suffix}")
     if "maheshwaram" in name_lower:
         aliases.add(name_lower.replace("maheshwaram", "maheswaram"))
-        aliases.add("maheswaram-1")
-        aliases.add("maheswaram-2")
+        if suffix:
+            aliases.add(f"maheswaram{suffix}")
     if "sadasivapet" in name_lower:
         aliases.add(name_lower.replace("sadasivapet", "sadashivapet"))
-        aliases.add("sadashivapet-1")
-        aliases.add("sadashivapet-2")
+        if suffix:
+            aliases.add(f"sadashivapet{suffix}")
     if "thandur" in name_lower:
         aliases.add(name_lower.replace("thandur", "tandur"))
         aliases.add("tandur")
@@ -4533,6 +4538,295 @@ async def export_interruptions_all(
         headers={"Content-Disposition": f"attachment; filename=Interruptions_All_{year}_{month:02d}.xlsx"},
     )
 
+async def _get_interruptions_report_data(year: int, month: int):
+    start_date = f"{year}-{month:02d}-01"
+    if month == 12:
+        end_date = f"{year + 1}-01-01"
+    else:
+        end_date = f"{year}-{month + 1:02d}-01"
+
+    feeders = await db.max_min_feeders.find(
+        {"type": {"$in": ["feeder_400kv", "feeder_220kv", "ict_feeder", "reactor_feeder", "bay_feeder"]}},
+        {"_id": 0},
+    ).to_list(200)
+
+    feeders_by_id = {f["id"]: f for f in feeders}
+
+    all_entries = await db.interruption_entries.find(
+        {"date": {"$gte": start_date, "$lt": end_date}},
+        {"_id": 0},
+    ).to_list(20000)
+
+    entries_by_feeder = {}
+    for entry in all_entries:
+        fid = entry.get("feeder_id")
+        if not fid or fid not in feeders_by_id:
+            continue
+        if fid not in entries_by_feeder:
+            entries_by_feeder[fid] = []
+        entries_by_feeder[fid].append(entry)
+
+    for fid, rows in entries_by_feeder.items():
+        rows.sort(
+            key=lambda e: (
+                e.get("date") or "",
+                (e.get("data") or {}).get("start_time") or "",
+            )
+        )
+
+    def split_cause_and_relay(text: str):
+        base = text or ""
+        lower = base.lower()
+
+        def strip_time(s: str) -> str:
+            # Remove patterns like "at 10:15 hrs" or "at 9.30 hours"
+            return re.sub(r"\bat\s+\d{1,2}[:\.]\d{2}\s*(?:hrs?|hours?)?\b", "", s, flags=re.IGNORECASE)
+
+        def trim_edges(s: str) -> str:
+            return re.sub(r"^[\s\.\-,:]+", "", re.sub(r"[\s\.\-,:]+$", "", s))
+
+        if "a/r success" in lower and "with following indications" in lower:
+            idx_follow = lower.index("with following indications")
+            relay = base[idx_follow + len("with following indications") :]
+            relay = trim_edges(relay)
+            cause_segment = base[:idx_follow]
+            idx_ar = lower.index("a/r success")
+            if idx_ar != -1:
+                cause_segment = base[idx_ar:idx_follow]
+            cause = strip_time(cause_segment)
+            cause = trim_edges(cause)
+            return cause, relay
+
+        if "lc issued" in lower:
+            idx_lc = lower.index("lc issued")
+            segment = base[idx_lc:]
+            lower_seg = segment.lower()
+            idx_for = lower_seg.find(" for ")
+            if idx_for != -1:
+                cause_segment = segment[:idx_for]
+                relay_segment = segment[idx_for:]
+            else:
+                cause_segment = segment
+                relay_segment = ""
+            cause = strip_time(cause_segment)
+            cause = trim_edges(cause)
+            relay = trim_edges(relay_segment or "")
+            return cause, relay
+
+        idx_for_plain = lower.find(" for ")
+        if idx_for_plain != -1:
+            cause_segment = base[:idx_for_plain]
+            cause = strip_time(cause_segment)
+            cause = trim_edges(cause)
+            relay = trim_edges(base[idx_for_plain:])
+            return cause, relay
+
+        return base, ""
+
+    def build_groups(target_types, bay_prefix=None):
+        relevant = []
+        for f in feeders:
+            ftype = f.get("type")
+            name = f.get("name", "")
+            if ftype in target_types:
+                relevant.append(f)
+            elif ftype == "bay_feeder" and bay_prefix and name.startswith(bay_prefix):
+                relevant.append(f)
+        relevant.sort(key=lambda x: x.get("name", ""))
+
+        groups = []
+        for feeder in relevant:
+            fid = feeder.get("id")
+            feeder_entries = entries_by_feeder.get(fid, [])
+            if not feeder_entries:
+                continue
+
+            rows = []
+            for idx, entry in enumerate(feeder_entries, 1):
+                data = entry.get("data") or {}
+                end_date_str = data.get("end_date") or entry.get("date")
+                end_time_raw = data.get("end_time") or ""
+                end_time_fmt = format_time(end_time_raw) if end_time_raw else ""
+                if not end_time_fmt:
+                    to_value = ""
+                elif end_date_str == entry.get("date"):
+                    to_value = end_time_fmt
+                else:
+                    to_value = f"{format_date(end_date_str)} {end_time_fmt}"
+
+                duration_minutes = data.get("duration_minutes")
+                duration_str = format_duration_hhmm(duration_minutes)
+
+                remarks_parts = []
+                remarks_val = data.get("remarks")
+                action_val = data.get("action_taken")
+                if remarks_val:
+                    remarks_parts.append(str(remarks_val))
+                if action_val:
+                    remarks_parts.append(str(action_val))
+                remarks_combined = "\n".join(remarks_parts)
+
+                description_val = data.get("description") or ""
+                cause_val = data.get("cause_of_interruption") or ""
+                relay_val = data.get("relay_indications_lc_work") or ""
+
+                if (not cause_val or cause_val == description_val) and description_val:
+                    parsed_cause, parsed_relay = split_cause_and_relay(description_val)
+                    cause_val = parsed_cause or description_val
+                    if not relay_val:
+                        relay_val = parsed_relay or ""
+
+                rows.append(
+                    {
+                        "sl_no": idx,
+                        "date": format_date(entry.get("date")),
+                        "time_from": format_time(data.get("start_time") or ""),
+                        "time_to": to_value,
+                        "duration": duration_str,
+                        "cause": cause_val,
+                        "relay": relay_val,
+                        "breakdown": data.get("breakdown_declared") or "",
+                        "fault_identified": data.get("fault_identified_during_patrolling") or "",
+                        "fault_location": data.get("fault_location") or "",
+                        "remarks": remarks_combined,
+                    }
+                )
+
+            if rows:
+                groups.append({"name": feeder.get("name", ""), "rows": rows})
+
+        return groups
+
+    month_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    if 1 <= month <= 12:
+        month_label = month_labels[month - 1]
+    else:
+        month_label = str(month)
+
+    sections = [
+        {
+            "id": "400kv",
+            "title": "400KV Feeders",
+            "header": f"Interruptions of 400KV SS Shankarpally 400KV Feeders for the Month of {month_label}-{year}",
+            "groups": build_groups(["feeder_400kv"], bay_prefix="4-"),
+        },
+        {
+            "id": "220kv",
+            "title": "220KV Feeders",
+            "header": f"Interruptions of 400KV SS Shankarpally 220KV Feeders for the Month of {month_label}-{year}",
+            "groups": build_groups(["feeder_220kv"], bay_prefix="2-"),
+        },
+        {
+            "id": "ict_reactor",
+            "title": "ICTs & 125MVAR Reactor",
+            "header": f"Interruptions of 400KV SS Shankarpally ICTs / Bays / Reactor for the Month of {month_label}-{year}",
+            "groups": build_groups(["ict_feeder", "reactor_feeder"]),
+        },
+    ]
+
+    return {
+        "sections": sections,
+        "month_label": month_label,
+        "year": year,
+    }
+
+async def _generate_interruptions_report_wb(year: int, month: int):
+    from openpyxl.styles import PatternFill, Border, Side, Alignment, Font
+    from openpyxl.utils import get_column_letter
+
+    data = await _get_interruptions_report_data(year, month)
+
+    thin_border = Border(left=Side(style="thin"), right=Side(style="thin"), top=Side(style="thin"), bottom=Side(style="thin"))
+    center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left_align = Alignment(horizontal="left", vertical="top", wrap_text=True)
+    header_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+
+    wb = Workbook()
+    if "Sheet" in wb.sheetnames:
+        del wb["Sheet"]
+
+    headers = [
+        "Sl. No",
+        "Date",
+        "Time From",
+        "Time To",
+        "Duration",
+        "Cause of Interruption",
+        "Relay Indications / LC Work carried out",
+        "Break down declared or Not",
+        "Fault identified in patrolling",
+        "Fault Location",
+        "Remarks and action taken",
+    ]
+
+    sections = data.get("sections") or []
+    for section in sections:
+        ws = wb.create_sheet(title=section.get("title", "")[:31] or "Sheet")
+
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+        c = ws.cell(row=1, column=1, value=section.get("header", ""))
+        c.font = Font(bold=True)
+        c.alignment = center_align
+        c.border = thin_border
+
+        for col_idx, h in enumerate(headers, 1):
+            cell = ws.cell(row=2, column=col_idx, value=h)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = center_align
+            cell.border = thin_border
+
+        row_idx = 3
+        groups = section.get("groups") or []
+        if not groups:
+            ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=len(headers))
+            cell = ws.cell(row=row_idx, column=1, value="No interruptions found for this period")
+            cell.alignment = center_align
+            cell.border = thin_border
+            continue
+
+        for group in groups:
+            ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=len(headers))
+            cell = ws.cell(row=row_idx, column=1, value=group.get("name", ""))
+            cell.font = Font(bold=True)
+            cell.alignment = center_align
+            cell.border = thin_border
+            row_idx += 1
+
+            for row in group.get("rows") or []:
+                values = [
+                    row.get("sl_no"),
+                    row.get("date"),
+                    row.get("time_from"),
+                    row.get("time_to"),
+                    row.get("duration"),
+                    row.get("cause"),
+                    row.get("relay"),
+                    row.get("breakdown"),
+                    row.get("fault_identified"),
+                    row.get("fault_location"),
+                    row.get("remarks"),
+                ]
+                for col_idx, val in enumerate(values, 1):
+                    cell = ws.cell(row=row_idx, column=col_idx, value=val)
+                    cell.border = thin_border
+                    if col_idx <= 5 or col_idx >= 8 and col_idx <= 10:
+                        cell.alignment = center_align
+                    else:
+                        cell.alignment = left_align
+                row_idx += 1
+
+        for col_idx in range(1, len(headers) + 1):
+            col_letter = get_column_letter(col_idx)
+            max_len = 0
+            for cell in ws[col_letter]:
+                if cell.value is not None:
+                    max_len = max(max_len, len(str(cell.value)))
+            ws.column_dimensions[col_letter].width = min(max(max_len + 2, 12), 40)
+
+    return wb
+
 async def _generate_fortnight_report_wb(year: int, month: int):
     try:
         import io
@@ -6662,24 +6956,38 @@ async def export_kpi_report(
         import calendar
         wb = await _generate_kpi_report_wb(year, month)
         month_name = calendar.month_name[month]
-        
+
         output = io.BytesIO()
         wb.save(output)
         output.seek(0)
-        
+
         filename = f"KPI_Report_{month_name}_{year}.xlsx"
-        
+
         return StreamingResponse(
             output,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename={filename}"}
         )
-        
     except Exception as e:
         import traceback
         error_msg = traceback.format_exc()
         with open("export_error_log.txt", "w") as f:
             f.write(error_msg)
+        print(error_msg)
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+@api_router.get("/reports/interruptions/preview/{year}/{month}")
+async def preview_interruptions_report(
+    year: int,
+    month: int,
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        data = await _get_interruptions_report_data(year, month)
+        return data
+    except Exception as e:
+        import traceback
+        error_msg = traceback.format_exc()
         print(error_msg)
         return JSONResponse(status_code=500, content={"detail": str(e)})
 
@@ -7881,6 +8189,34 @@ async def export_tl_max_loading_report(
             pass
         return JSONResponse(status_code=500, content={"detail": error_msg})
 
+@api_router.get("/reports/interruptions/export/{year}/{month}")
+async def export_interruptions_report(
+    year: int,
+    month: int,
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        import calendar
+        wb = await _generate_interruptions_report_wb(year, month)
+        month_name = calendar.month_name[month]
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        filename = f"Interruptions_Report_{month_name}_{year}.xlsx"
+
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        import traceback
+        error_msg = traceback.format_exc()
+        print(error_msg)
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
 @api_router.post("/reports/send-mail")
 async def send_reports_email_endpoint(
     request: EmailReportRequest,
@@ -8007,6 +8343,20 @@ async def send_reports_email_endpoint(
                 error_msg = f"Error generating TL Max Loading Report: {str(e)}\n{traceback.format_exc()}\n"
                 print(error_msg)
                 errors.append(error_msg)
+
+        # 9. Interruptions Monthly Report
+        if not report_ids or 'interruptions' in report_ids:
+            try:
+                wb = await _generate_interruptions_report_wb(year, month)
+                output = io.BytesIO()
+                wb.save(output)
+                output.seek(0)
+                attachments.append((f"Interruptions_Report_{month_name}_{year}.xlsx", output.read()))
+            except Exception as e:
+                import traceback
+                error_msg = f"Error generating Interruptions Report: {str(e)}\n{traceback.format_exc()}\n"
+                print(error_msg)
+                errors.append(error_msg)
         
         if errors:
             error_content = "\n".join(errors)
@@ -8028,7 +8378,8 @@ async def send_reports_email_endpoint(
             'line-losses': 'Line Losses',
             'daily-max-mva': 'Daily Max MVA',
             'ptr-max-min': 'PTR Max Min',
-            'tl-max-loading': 'TL Max Loading'
+            'tl-max-loading': 'TL Max Loading',
+            'interruptions': 'Interruptions'
         }
 
         # Identify which reports were actually generated (or attempted)
@@ -8039,8 +8390,8 @@ async def send_reports_email_endpoint(
         
         # List of all available report keys (excluding optional ones if not requested)
         all_default_keys = [
-            'fortnight', 'boundary-meter', 'kpi', 'line-losses', 
-            'daily-max-mva', 'ptr-max-min', 'tl-max-loading'
+            'fortnight', 'boundary-meter', 'kpi', 'line-losses',
+            'daily-max-mva', 'ptr-max-min', 'tl-max-loading', 'interruptions'
         ]
         
         # If report_ids is empty, it means all default reports

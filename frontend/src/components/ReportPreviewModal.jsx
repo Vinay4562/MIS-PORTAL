@@ -525,6 +525,120 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
         );
     }
 
+    if (title === "Interruptions") {
+        const { sections } = data || {};
+        const sectionList = Array.isArray(sections) ? sections : [];
+        if (!sectionList.length) {
+            return <div className="text-center py-4">No data available</div>;
+        }
+
+        return (
+            <div className="w-full">
+                <Tabs defaultValue={sectionList[0]?.id || "400kv"} className="w-full mt-2">
+                    <TabsList className="grid w-full grid-cols-3 mb-4">
+                        {sectionList.map((section) => (
+                            <TabsTrigger key={section.id} value={section.id}>
+                                {section.title}
+                            </TabsTrigger>
+                        ))}
+                    </TabsList>
+
+                    {sectionList.map((section) => (
+                        <TabsContent key={section.id} value={section.id}>
+                            <div className="border rounded-md overflow-x-auto">
+                                <Table>
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead colSpan={11} className="text-center border bg-muted h-auto py-2">
+                                                {section.header}
+                                            </TableHead>
+                                        </TableRow>
+                                        <TableRow>
+                                            <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2 w-[60px]">Sl. No</TableHead>
+                                            <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2 min-w-[120px]">Date</TableHead>
+                                            <TableHead colSpan={2} className="text-center border bg-muted h-auto py-2 min-w-[140px]">Time</TableHead>
+                                            <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2 min-w-[80px]">Duration</TableHead>
+                                            <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2 min-w-[260px]">Cause of Interruption</TableHead>
+                                            <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2 min-w-[260px]">Relay Indications / LC Work carried out</TableHead>
+                                            <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2 min-w-[130px]">Break down declared or Not</TableHead>
+                                            <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2 min-w-[150px]">Fault identified in patrolling</TableHead>
+                                            <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2 min-w-[120px]">Fault Location</TableHead>
+                                            <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2 min-w-[200px]">Remarks and action taken</TableHead>
+                                        </TableRow>
+                                        <TableRow>
+                                            <TableHead className="text-center border bg-muted h-auto py-2 min-w-[70px]">From</TableHead>
+                                            <TableHead className="text-center border bg-muted h-auto py-2 min-w-[70px]">To</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {(() => {
+                                            const groups = Array.isArray(section.groups) ? section.groups : [];
+                                            if (!groups.length) {
+                                                return (
+                                                    <TableRow>
+                                                        <TableCell colSpan={11} className="text-center py-4">
+                                                            No interruptions found for this period.
+                                                        </TableCell>
+                                                    </TableRow>
+                                                );
+                                            }
+                                            return groups.map((group) => (
+                                                <React.Fragment key={group.name}>
+                                                    <TableRow>
+                                                        <TableCell colSpan={11} className="border font-semibold text-center">
+                                                            {group.name}
+                                                        </TableCell>
+                                                    </TableRow>
+                                                    {Array.isArray(group.rows) && group.rows.map((row, index) => (
+                                                        <TableRow key={`${group.name}-${index}`}>
+                                                            <TableCell className="text-center border p-2">
+                                                                {row.sl_no ?? index + 1}
+                                                            </TableCell>
+                                                            <TableCell className="text-center border p-2 whitespace-nowrap">
+                                                                {row.date}
+                                                            </TableCell>
+                                                            <TableCell className="text-center border p-2">
+                                                                {row.time_from}
+                                                            </TableCell>
+                                                            <TableCell className="text-center border p-2">
+                                                                {row.time_to}
+                                                            </TableCell>
+                                                            <TableCell className="text-center border p-2">
+                                                                {row.duration}
+                                                            </TableCell>
+                                                            <TableCell className="border p-2 whitespace-pre-wrap">
+                                                                {row.cause}
+                                                            </TableCell>
+                                                            <TableCell className="border p-2 whitespace-pre-wrap">
+                                                                {row.relay}
+                                                            </TableCell>
+                                                            <TableCell className="text-center border p-2">
+                                                                {row.breakdown}
+                                                            </TableCell>
+                                                            <TableCell className="text-center border p-2">
+                                                                {row.fault_identified}
+                                                            </TableCell>
+                                                            <TableCell className="text-center border p-2">
+                                                                {row.fault_location}
+                                                            </TableCell>
+                                                            <TableCell className="border p-2 whitespace-pre-wrap">
+                                                                {row.remarks}
+                                                            </TableCell>
+                                                        </TableRow>
+                                                    ))}
+                                                </React.Fragment>
+                                            ));
+                                        })()}
+                                    </TableBody>
+                                </Table>
+                            </div>
+                        </TabsContent>
+                    ))}
+                </Tabs>
+            </div>
+        );
+    }
+
     if (title === "Line Losses" && reportId === "line-losses") {
         const rows = Array.isArray(data) ? data : data?.lines || [];
 

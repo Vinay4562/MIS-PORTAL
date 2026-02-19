@@ -22,15 +22,35 @@ export default function DashboardLayout({ children }) {
   const location = useLocation();
   const [open, setOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [now, setNow] = useState(new Date());
 
   useEffect(() => {
     const handler = () => {
       setIsCollapsed(true);
       setOpen(false);
     };
+    const timer = setInterval(() => {
+      setNow(new Date());
+    }, 1000);
     window.addEventListener('collapse-sidebar', handler);
-    return () => window.removeEventListener('collapse-sidebar', handler);
+    return () => {
+      window.removeEventListener('collapse-sidebar', handler);
+      clearInterval(timer);
+    };
   }, []);
+
+  const formattedDate = now.toLocaleDateString(undefined, {
+    weekday: 'short',
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+  });
+
+  const formattedTime = now.toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
 
   const toggleTheme = () => {
     setTheme(theme === 'light' ? 'dark' : 'light');
@@ -213,9 +233,14 @@ export default function DashboardLayout({ children }) {
             </div>
 
             <div className="flex items-center gap-3 ml-auto">
-              <span className="text-sm font-medium text-slate-700 dark:text-slate-200 hidden md:inline-block">
-                {user?.full_name}
-              </span>
+              <div className="hidden md:flex flex-col items-end leading-tight mr-1">
+                <span className="text-base font-semibold text-slate-700 dark:text-slate-200">
+                  {user?.full_name}
+                </span>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 animate-pulse">
+                  {formattedDate} • {formattedTime}
+                </span>
+              </div>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="icon" className="rounded-full">
