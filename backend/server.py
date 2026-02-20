@@ -7987,7 +7987,10 @@ async def _get_new_line_losses_report_data(year: int, month: int) -> Dict[str, A
     ss_name = "400KV SHANKARPALLY"
 
     for base in base_rows:
-        feeder_name = base.get("feeder_name", "")
+        feeder_name = (base.get("feeder_name") or "").strip()
+
+        if feeder_name.upper() == "400KV NIZAMABAD-1 & 2":
+            continue
         shank = base.get("shankarpally") or {}
         other = base.get("other_end") or {}
 
