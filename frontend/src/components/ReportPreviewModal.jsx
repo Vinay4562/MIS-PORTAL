@@ -375,6 +375,8 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                             <TableHead colSpan={2} className="text-center border bg-muted h-auto py-2">General Loading</TableHead>
                             <TableHead colSpan={6} className="text-center border bg-muted h-auto py-2">Maximum Load Details</TableHead>
                             <TableHead colSpan={6} className="text-center border bg-muted h-auto py-2">Minimum Load Details</TableHead>
+                            <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2">MD reached in 2026</TableHead>
+                            <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2">MD reached so far</TableHead>
                         </TableRow>
                         <TableRow>
                             <TableHead className="text-center border bg-muted h-auto py-2">MW</TableHead>
@@ -422,11 +424,18 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                                     <TableCell className="text-center border p-2">{row.min?.mvar?.toFixed(2)}</TableCell>
                                     <TableCell className="text-center border p-2">{row.min?.mva?.toFixed(2)}</TableCell>
                                     <TableCell className="text-center border p-2">-</TableCell>
+
+                                    <TableCell className="text-center border p-2">
+                                        {row.md_2026 !== undefined && row.md_2026 !== null ? row.md_2026 : ""}
+                                    </TableCell>
+                                    <TableCell className="text-center border p-2">
+                                        {row.md_so_far !== undefined && row.md_so_far !== null ? row.md_so_far : ""}
+                                    </TableCell>
                                 </TableRow>
                             ))
                         ) : (
                             <TableRow>
-                                <TableCell colSpan={18} className="text-center py-4">No data available</TableCell>
+                                <TableCell colSpan={20} className="text-center py-4">No data available</TableCell>
                             </TableRow>
                         )}
                     </TableBody>

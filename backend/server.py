@@ -8302,6 +8302,46 @@ async def get_ptr_max_min_preview(
     # Sort ICT feeders
     ICT_ORDER = ["ICT-1 (315MVA)", "ICT-2 (315MVA)", "ICT-3 (315MVA)", "ICT-4 (500MVA)"]
     ict_feeders.sort(key=lambda x: ICT_ORDER.index(x['name']) if x['name'] in ICT_ORDER else 999)
+
+    MD_SO_FAR_BASELINE_PTR = {
+        "ICT-1 (315MVA)": 226,
+        "ICT-2 (315MVA)": 225,
+        "ICT-3 (315MVA)": 226,
+        "ICT-4 (500MVA)": 387,
+    }
+
+    MD_YEAR_PTR = 2026
+    md_2026_map: dict[str, float] = {}
+
+    if year == MD_YEAR_PTR and ict_feeders:
+        md_start = f"{MD_YEAR_PTR}-01-01"
+        if month == 12:
+            md_end = f"{MD_YEAR_PTR + 1}-01-01"
+        else:
+            md_end = f"{MD_YEAR_PTR}-{month + 1:02d}-01"
+
+        ict_ids = [f["id"] for f in ict_feeders if "id" in f]
+
+        if ict_ids:
+            md_entries = await db.max_min_entries.find(
+                {
+                    "feeder_id": {"$in": ict_ids},
+                    "date": {"$gte": md_start, "$lt": md_end},
+                },
+                {"_id": 0},
+            ).to_list(10000)
+
+            for e in md_entries:
+                feeder_id = e.get("feeder_id")
+                if not feeder_id:
+                    continue
+                d = e.get("data", {})
+                mw_val = get_float_safe(d.get("max", {}).get("mw"))
+                if mw_val is None:
+                    continue
+                prev = md_2026_map.get(feeder_id)
+                if prev is None or mw_val > prev:
+                    md_2026_map[feeder_id] = mw_val
     
     data = []
     
@@ -8315,6 +8355,7 @@ async def get_ptr_max_min_preview(
             # Placeholder for missing data
             rating = "315"
             if "500" in feeder['name']: rating = "500"
+            md_2026_val = md_2026_map.get(feeder["id"]) if year == MD_YEAR_PTR else None
             data.append({
                 "district": "Rangareddy",
                 "substation": "400/220 KV SHANKARPALLY",
@@ -8322,7 +8363,9 @@ async def get_ptr_max_min_preview(
                 "rating": rating,
                 "general": {"mw": 0, "mvar": 0},
                 "max": None,
-                "min": None
+                "min": None,
+                "md_2026": md_2026_val,
+                "md_so_far": MD_SO_FAR_BASELINE_PTR.get(feeder["name"])
             })
             continue
             
@@ -8415,6 +8458,8 @@ async def get_ptr_max_min_preview(
         rating = "315"
         if "500" in feeder['name']: rating = "500"
         
+        md_2026_val = md_2026_map.get(feeder["id"]) if year == MD_YEAR_PTR else None
+
         data.append({
             "district": "Rangareddy",
             "substation": "400/220 KV SHANKARPALLY",
@@ -8425,7 +8470,9 @@ async def get_ptr_max_min_preview(
                 "mvar": avg_mvar
             },
             "max": max_details,
-            "min": min_details
+            "min": min_details,
+            "md_2026": md_2026_val,
+            "md_so_far": MD_SO_FAR_BASELINE_PTR.get(feeder["name"])
         })
         
     return data
@@ -8531,8 +8578,11 @@ async def _generate_ptr_max_min_report_wb(year: int, month: int, current_user: U
 
         set_style(ws.cell(row=row_idx, column=18, value=""))
         
-        set_style(ws.cell(row=row_idx, column=19, value=""))
-        set_style(ws.cell(row=row_idx, column=20, value=""))
+        md_2026_val = item.get("md_2026")
+        md_so_far_val = item.get("md_so_far")
+
+        set_style(ws.cell(row=row_idx, column=19, value=md_2026_val if md_2026_val is not None else ""))
+        set_style(ws.cell(row=row_idx, column=20, value=md_so_far_val if md_so_far_val is not None else ""))
         
         row_idx += 1
         
@@ -8632,10 +8682,91 @@ async def get_tl_max_loading_preview(
         "220KV SADASIVAPET-2": "Shankarpally - Sadasivapet-2"
     }
 
+    MD_SO_FAR_BASELINE = {
+        "400KV MAHESHWARAM-2": 426,
+        "400KV MAHESHWARAM-1": 425,
+        "400KV NARSAPUR-1": 564,
+        "400KV NARSAPUR-2": 712,
+        "400KV KETHIREDDYPALLY-1": 447,
+        "400KV KETHIREDDYPALLY-2": 456,
+        "400KV NIZAMABAD-1": 484,
+        "400KV NIZAMABAD-2": 501,
+        "220KV PARIGI-1": 271,
+        "220KV PARIGI-2": 251,
+        "220KV THANDUR": 208,
+        "220KV GACHIBOWLI-1": 364,
+        "220KV GACHIBOWLI-2": 483,
+        "220KV KETHIREDDYPALLY": 185,
+        "220KV YEDDUMAILARAM-1": 212,
+        "220KV YEDDUMAILARAM-2": 223,
+        "220KV SADASIVAPET-1": 137,
+        "220KV SADASIVAPET-2": 155,
+    }
+
     # Fetch all feeders (needed for group logic)
     all_db_feeders = await db.max_min_feeders.find({}, {"_id": 0}).to_list(1000)
     all_feeder_map = {f['name']: f for f in all_db_feeders}
     all_feeder_id_map = {f['id']: f for f in all_db_feeders}
+
+    MD_YEAR = 2026
+    md_2026_map: dict[str, float | None] = {}
+
+    if year == MD_YEAR:
+        md_start = f"{MD_YEAR}-01-01"
+        if month == 12:
+            md_end = f"{MD_YEAR + 1}-01-01"
+        else:
+            md_end = f"{MD_YEAR}-{month + 1:02d}-01"
+
+        md_entries = await db.max_min_entries.find(
+            {
+                "date": {"$gte": md_start, "$lt": md_end},
+            },
+            {"_id": 0},
+        ).to_list(100000)
+
+        entries_2026_by_feeder: dict[str, list[dict]] = {}
+        for e in md_entries:
+            fid = e.get("feeder_id")
+            if not fid:
+                continue
+            if fid not in entries_2026_by_feeder:
+                entries_2026_by_feeder[fid] = []
+            entries_2026_by_feeder[fid].append(e)
+
+        for feeder_name in TL_ORDER:
+            feeder = all_feeder_map.get(feeder_name)
+            if not feeder:
+                continue
+
+            feeder_id = feeder["id"]
+            feeder_entries = entries_2026_by_feeder.get(feeder_id, [])
+
+            is_special, partner_names = get_feeder_group_info(feeder["name"])
+            if is_special:
+                p_group_map: dict[str, list[dict]] = {feeder_id: feeder_entries}
+                for pname in partner_names:
+                    p_feeder = all_feeder_map.get(pname)
+                    if not p_feeder:
+                        continue
+                    p_id = p_feeder["id"]
+                    p_group_map[p_id] = entries_2026_by_feeder.get(p_id, [])
+
+                leader_id = determine_leader(p_group_map)
+                if not leader_id:
+                    leader_id = feeder_id
+
+                leader_entries = p_group_map.get(leader_id, [])
+                ftype = feeder.get("type", "feeder")
+                stats_year = calculate_coincident_stats(leader_entries, feeder_id, p_group_map, ftype)
+            else:
+                ftype = feeder.get("type", "feeder")
+                stats_year = calculate_standard_stats(feeder_entries, ftype)
+
+            max_mw_year = stats_year.get("max_mw", "-")
+            max_mw_year_val = get_float_safe(max_mw_year)
+            if max_mw_year_val is not None:
+                md_2026_map[feeder_name] = max_mw_year_val
 
     # Fetch all entries for the month
     all_entries = await db.max_min_entries.find(
@@ -8661,6 +8792,8 @@ async def get_tl_max_loading_preview(
         mvar_val = ""
         date_val = ""
         time_val = ""
+        md_2026_val_str = ""
+        md_so_far_val_str = ""
         
         if feeder:
             feeder_entries = entries_by_feeder.get(feeder['id'], [])
@@ -8712,6 +8845,17 @@ async def get_tl_max_loading_preview(
                 except:
                     pass
 
+            md_2026_num = md_2026_map.get(feeder_name)
+            if md_2026_num is not None:
+                md_2026_val_str = f"{md_2026_num:.0f}"
+
+            baseline = MD_SO_FAR_BASELINE.get(feeder_name)
+            final_md_so_far = baseline
+            if md_2026_num is not None and baseline is not None and md_2026_num > baseline:
+                final_md_so_far = md_2026_num
+            if final_md_so_far is not None:
+                md_so_far_val_str = f"{final_md_so_far:.0f}"
+
         display_name = DISPLAY_NAMES.get(feeder_name, feeder_name)
         voltage = "400 KV" if "400" in feeder_name else "220KV"
         
@@ -8725,8 +8869,8 @@ async def get_tl_max_loading_preview(
             "mvar": mvar_val,
             "date": date_val,
             "time": time_val,
-            "md_2026": "",
-            "md_so_far": "",
+            "md_2026": md_2026_val_str,
+            "md_so_far": md_so_far_val_str,
             "remarks": ""
         })
             
