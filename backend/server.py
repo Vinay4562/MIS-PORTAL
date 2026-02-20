@@ -8354,8 +8354,15 @@ async def get_ptr_max_min_preview(
         if not entries:
             # Placeholder for missing data
             rating = "315"
-            if "500" in feeder['name']: rating = "500"
+            if "500" in feeder['name']:
+                rating = "500"
+
             md_2026_val = md_2026_map.get(feeder["id"]) if year == MD_YEAR_PTR else None
+            baseline = MD_SO_FAR_BASELINE_PTR.get(feeder["name"])
+            final_md_so_far = baseline
+            if year == MD_YEAR_PTR and md_2026_val is not None and baseline is not None and md_2026_val > baseline:
+                final_md_so_far = md_2026_val
+
             data.append({
                 "district": "Rangareddy",
                 "substation": "400/220 KV SHANKARPALLY",
@@ -8365,7 +8372,7 @@ async def get_ptr_max_min_preview(
                 "max": None,
                 "min": None,
                 "md_2026": md_2026_val,
-                "md_so_far": MD_SO_FAR_BASELINE_PTR.get(feeder["name"])
+                "md_so_far": final_md_so_far
             })
             continue
             
@@ -8456,9 +8463,14 @@ async def get_ptr_max_min_preview(
             min_details = {"date": "-", "time": "-", "mw": 0, "mvar": 0, "mva": 0}
             
         rating = "315"
-        if "500" in feeder['name']: rating = "500"
-        
+        if "500" in feeder['name']:
+            rating = "500"
+
         md_2026_val = md_2026_map.get(feeder["id"]) if year == MD_YEAR_PTR else None
+        baseline = MD_SO_FAR_BASELINE_PTR.get(feeder["name"])
+        final_md_so_far = baseline
+        if year == MD_YEAR_PTR and md_2026_val is not None and baseline is not None and md_2026_val > baseline:
+            final_md_so_far = md_2026_val
 
         data.append({
             "district": "Rangareddy",
@@ -8472,7 +8484,7 @@ async def get_ptr_max_min_preview(
             "max": max_details,
             "min": min_details,
             "md_2026": md_2026_val,
-            "md_so_far": MD_SO_FAR_BASELINE_PTR.get(feeder["name"])
+            "md_so_far": final_md_so_far
         })
         
     return data
