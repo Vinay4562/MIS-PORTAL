@@ -197,7 +197,7 @@ export default function MaxMinEntryModal({ isOpen, onClose, onSave, feeder, year
     });
   };
 
-  const renderField = (label, path, type = "number", step = "0.01") => {
+  const renderField = (label, path, type = "number", step = "0.01", inputRef) => {
     const val = getValue(path);
     const isNS = val === 'N/S';
     return (
@@ -214,6 +214,7 @@ export default function MaxMinEntryModal({ isOpen, onClose, onSave, feeder, year
         className={`col-span-3 border-slate-200 focus:ring-2 focus:ring-indigo-500/20 ${isNS ? 'bg-slate-50 text-slate-500' : ''}`}
         disabled={isNS}
         required
+        ref={inputRef}
       />
     </div>
     );
@@ -345,7 +346,7 @@ export default function MaxMinEntryModal({ isOpen, onClose, onSave, feeder, year
                     <div className="space-y-4">
                         <div>
                             <Label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 block">400KV Bus Voltage</Label>
-                            {renderField("Max Value (kV)", "max_bus_voltage_400kv.value")}
+                            {renderField("Max Value (kV)", "max_bus_voltage_400kv.value", "number", "0.01", firstInputRef)}
                         </div>
                         
                         <div className="pt-2 border-t border-slate-200/50">
@@ -417,7 +418,7 @@ export default function MaxMinEntryModal({ isOpen, onClose, onSave, feeder, year
                         <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
                         Maximum Values
                     </h3>
-                    {renderField("Max Amps", "max.amps")}
+                    {renderField("Max Amps", "max.amps", "number", "0.01", firstInputRef)}
                     {renderField("Max MW", "max.mw")}
                     {feeder.type === 'ict_feeder' && renderField("Max MVAR", "max.mvar")}
                     {renderTimeField("Time", "max.time")}
