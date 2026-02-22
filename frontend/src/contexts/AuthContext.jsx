@@ -48,6 +48,16 @@ export function AuthProvider({ children }) {
     return user;
   };
 
+  const adminLogin = async (email, password) => {
+    const response = await axios.post(`${API}/admin/auth/login`, { email, password }, { timeout: 15000 });
+    const { access_token, user } = response.data;
+    localStorage.setItem('token', access_token);
+    setToken(access_token);
+    setUser(user);
+    axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
+    return user;
+  };
+
   const register = async (email, password, full_name) => {
     const response = await axios.post(`${API}/auth/register`, { email, password, full_name }, { timeout: 15000 });
     const { access_token, user } = response.data;
@@ -73,7 +83,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, signupRequest, signupVerify }}>
+    <AuthContext.Provider value={{ user, loading, login, adminLogin, register, logout, signupRequest, signupVerify }}>
       {children}
     </AuthContext.Provider>
   );

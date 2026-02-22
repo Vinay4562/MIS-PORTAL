@@ -23,6 +23,7 @@ from email.mime.base import MIMEBase
 from email import encoders
 import random
 import string
+import secrets
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -454,6 +455,19 @@ class ResetPasswordRequest(BaseModel):
     otp: str
     new_password: str
 
+class AdminOtpVerifyRequest(BaseModel):
+    email: str
+    otp: str
+
+class AdminResetPasswordRequest(BaseModel):
+    email: str
+    reset_token: str
+    new_password: str
+
+class AdminChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
 class SignupVerifyRequest(BaseModel):
     email: str
     otp: str
@@ -464,6 +478,18 @@ class EmailReportRequest(BaseModel):
     month: int
     report_ids: Optional[List[str]] = None
 
+
+class AdminMaxMinExportColumn(BaseModel):
+    key: str
+    label: str
+    field: str
+
+
+class AdminMaxMinExportViewPayload(BaseModel):
+    columns: List[AdminMaxMinExportColumn]
+    rows: List[dict]
+    meta: Optional[dict] = None
+
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -473,6 +499,7 @@ class User(BaseModel):
 
 class UserInDB(User):
     hashed_password: str
+    admin_hashed_password: Optional[str] = ""
 
 class Token(BaseModel):
     access_token: str
@@ -629,6 +656,10 @@ def create_access_token(data: dict):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
+ADMIN_EMAILS = os.environ.get("ADMIN_EMAILS", "")
+ADMIN_EMAIL_SET = {e.strip().lower() for e in ADMIN_EMAILS.split(",") if e.strip()}
+
+
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     try:
         token = credentials.credentials
@@ -649,6 +680,18 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         raise HTTPException(status_code=401, detail="Token expired")
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+
+async def get_current_admin(current_user: User = Depends(get_current_user)):
+    email = (current_user.email or "").lower()
+    if email not in ADMIN_EMAIL_SET:
+        raise HTTPException(status_code=403, detail="Not authorised for admin access")
+    return current_user
+
+
+@api_router.get("/admin/me", response_model=User)
+async def get_admin_me(current_admin: User = Depends(get_current_admin)):
+    return current_admin
 
 @api_router.post("/auth/register", response_model=Token)
 async def register(user_data: UserRegister):
@@ -684,6 +727,30 @@ async def login(user_data: UserLogin):
     user_response = User(**user)
     access_token = create_access_token(data={"sub": user['id']})
     
+    return Token(access_token=access_token, token_type="bearer", user=user_response)
+
+
+@api_router.post("/admin/auth/login", response_model=Token)
+async def admin_login(user_data: UserLogin):
+    user = await db.users.find_one({"email": user_data.email}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    email = (user.get("email") or "").lower()
+    if email not in ADMIN_EMAIL_SET:
+        raise HTTPException(status_code=403, detail="Not authorised for admin access")
+
+    admin_hash = user.get("admin_hashed_password")
+    if admin_hash:
+        if not verify_password(user_data.password, admin_hash):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+    else:
+        if not verify_password(user_data.password, user.get("hashed_password", "")):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    user_response = User(**user)
+    access_token = create_access_token(data={"sub": user['id']})
+
     return Token(access_token=access_token, token_type="bearer", user=user_response)
 
 @api_router.post("/auth/forgot-password")
@@ -733,6 +800,197 @@ async def reset_password(request: ResetPasswordRequest):
     await db.password_resets.delete_one({"email": request.email})
     
     return {"message": "Password reset successful"}
+
+
+@api_router.post("/admin/auth/forgot-password")
+async def admin_forgot_password(request: ForgotPasswordRequest):
+    email = request.email.lower()
+    if email not in ADMIN_EMAIL_SET:
+        return {"message": "If this admin account exists, an OTP has been sent"}
+    user = await db.users.find_one({"email": email}, {"_id": 0})
+    if not user:
+        return {"message": "If this admin account exists, an OTP has been sent"}
+    now = datetime.now(timezone.utc)
+    record = await db.admin_password_resets.find_one({"email": email})
+    if record:
+        last_sent = record.get("last_sent_at")
+        if isinstance(last_sent, str):
+            try:
+                last_sent = datetime.fromisoformat(last_sent)
+            except Exception:
+                last_sent = None
+        if last_sent:
+            if last_sent.tzinfo is None:
+                last_sent = last_sent.replace(tzinfo=timezone.utc)
+            delta = now - last_sent
+            if delta.total_seconds() < 60:
+                raise HTTPException(status_code=429, detail="OTP already sent recently. Please wait before requesting again")
+            send_count = int(record.get("send_count", 0))
+            first_sent = record.get("created_at") or last_sent
+            if isinstance(first_sent, str):
+                try:
+                    first_sent = datetime.fromisoformat(first_sent)
+                except Exception:
+                    first_sent = now
+            if first_sent.tzinfo is None:
+                first_sent = first_sent.replace(tzinfo=timezone.utc)
+            if (now - first_sent).total_seconds() < 3600 and send_count >= 5:
+                raise HTTPException(status_code=429, detail="Too many OTP requests. Please try again later")
+    otp = "".join(random.choices(string.digits, k=6))
+    otp_hash = get_password_hash(otp)
+    payload = {
+        "email": email,
+        "otp_hash": otp_hash,
+        "expires_at": now + timedelta(minutes=10),
+        "created_at": record.get("created_at") if record else now,
+        "last_sent_at": now,
+        "send_count": int(record.get("send_count", 0)) + 1 if record else 1,
+        "attempts": 0,
+        "otp_verified": False,
+        "reset_token": None,
+        "reset_token_expires_at": None,
+    }
+    if isinstance(payload["created_at"], str):
+        try:
+            payload["created_at"] = datetime.fromisoformat(payload["created_at"])
+        except Exception:
+            payload["created_at"] = now
+    await db.admin_password_resets.update_one(
+        {"email": email},
+        {"$set": payload},
+        upsert=True,
+    )
+    try:
+        smtp_sender = os.environ.get("SMTP_EMAIL")
+        sender_email = smtp_sender or os.environ.get("SMTP_USER")
+        message = MIMEMultipart("alternative")
+        message["From"] = sender_email or ""
+        message["To"] = email
+        message["Subject"] = "Admin Panel Password Reset OTP"
+        text = f"An admin panel password reset was requested for {email}. Your OTP is: {otp}"
+        html = f"""
+        <html>
+          <body>
+            <h2>Admin Panel Password Reset</h2>
+            <p>An admin panel password reset was requested for <b>{email}</b>.</p>
+            <p>Your OTP is: <b style="font-size: 24px;">{otp}</b></p>
+            <p>This OTP will expire in 10 minutes.</p>
+          </body>
+        </html>
+        """
+        part1 = MIMEText(text, "plain")
+        part2 = MIMEText(html, "html")
+        message.attach(part1)
+        message.attach(part2)
+        if sender_email:
+            _send_email_core(email, message["Subject"], message)
+        else:
+            print("SMTP_EMAIL/SMTP_USER not configured; cannot send admin OTP email")
+    except Exception as e:
+        print(f"Error sending admin password reset OTP email: {e}")
+    return {"message": "If this admin account exists, an OTP has been sent"}
+
+
+@api_router.post("/admin/auth/verify-otp")
+async def admin_verify_otp(request: AdminOtpVerifyRequest):
+    email = request.email.lower()
+    if email not in ADMIN_EMAIL_SET:
+        raise HTTPException(status_code=400, detail="Invalid OTP or email")
+    record = await db.admin_password_resets.find_one({"email": email})
+    if not record:
+        raise HTTPException(status_code=400, detail="Invalid OTP or email")
+    now = datetime.now(timezone.utc)
+    expires_at = record.get("expires_at")
+    if isinstance(expires_at, str):
+        try:
+            expires_at = datetime.fromisoformat(expires_at)
+        except Exception:
+            expires_at = None
+    if expires_at:
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at < now:
+            raise HTTPException(status_code=400, detail="OTP expired")
+    attempts = int(record.get("attempts", 0))
+    if attempts >= 5:
+        raise HTTPException(status_code=400, detail="Too many incorrect attempts. Request a new OTP")
+    otp_hash = record.get("otp_hash") or ""
+    if not verify_password(request.otp, otp_hash):
+        await db.admin_password_resets.update_one(
+            {"email": email},
+            {"$set": {"attempts": attempts + 1}},
+        )
+        raise HTTPException(status_code=400, detail="Invalid OTP")
+    reset_token = secrets.token_urlsafe(32)
+    await db.admin_password_resets.update_one(
+        {"email": email},
+        {
+            "$set": {
+                "otp_verified": True,
+                "reset_token": reset_token,
+                "reset_token_expires_at": now + timedelta(minutes=15),
+            }
+        },
+    )
+    return {"reset_token": reset_token}
+
+
+@api_router.post("/admin/auth/reset-password")
+async def admin_reset_password(request: AdminResetPasswordRequest):
+    email = request.email.lower()
+    if email not in ADMIN_EMAIL_SET:
+        raise HTTPException(status_code=400, detail="Invalid reset token or email")
+    record = await db.admin_password_resets.find_one({"email": email})
+    if not record:
+        raise HTTPException(status_code=400, detail="Invalid reset token or email")
+    if not record.get("otp_verified"):
+        raise HTTPException(status_code=400, detail="OTP verification required")
+    stored_token = record.get("reset_token") or ""
+    if not stored_token or stored_token != request.reset_token:
+        raise HTTPException(status_code=400, detail="Invalid reset token or email")
+    now = datetime.now(timezone.utc)
+    token_expires = record.get("reset_token_expires_at")
+    if isinstance(token_expires, str):
+        try:
+            token_expires = datetime.fromisoformat(token_expires)
+        except Exception:
+            token_expires = None
+    if token_expires:
+        if token_expires.tzinfo is None:
+            token_expires = token_expires.replace(tzinfo=timezone.utc)
+        if token_expires < now:
+            raise HTTPException(status_code=400, detail="Reset token expired")
+    if len(request.new_password or "") < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters long")
+    user = await db.users.find_one({"email": email}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=400, detail="User not found")
+    hashed_password = get_password_hash(request.new_password)
+    await db.users.update_one(
+        {"email": email},
+        {"$set": {"admin_hashed_password": hashed_password}},
+    )
+    await db.admin_password_resets.delete_one({"email": email})
+    return {"message": "Admin password reset successful"}
+
+
+@api_router.post("/admin/auth/change-password")
+async def admin_change_password(request: AdminChangePasswordRequest, current_admin: User = Depends(get_current_admin)):
+    if len(request.new_password or "") < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters long")
+    user = await db.users.find_one({"id": current_admin.id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=400, detail="User not found")
+    current_admin_hash = user.get("admin_hashed_password") or user.get("hashed_password", "")
+    if not verify_password(request.current_password, current_admin_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    hashed_password = get_password_hash(request.new_password)
+    await db.users.update_one(
+        {"id": current_admin.id},
+        {"$set": {"admin_hashed_password": hashed_password}},
+    )
+    await db.admin_password_resets.delete_one({"email": current_admin.email.lower()})
+    return {"message": "Password updated successfully"}
 
 @api_router.post("/auth/signup-request")
 async def signup_request(user_data: UserRegister):
@@ -2648,6 +2906,1370 @@ async def import_energy_entries(payload: EnergyImportPayload, current_user: User
         imported += 1
     
     return {"imported": imported}
+
+
+@api_router.post("/admin/bulk-import/line-losses/excel/{feeder_id}")
+async def admin_bulk_import_line_losses_excel(
+    feeder_id: str,
+    year: int | None = None,
+    month: int | None = None,
+    overwrite: bool = False,
+    file: UploadFile = File(...),
+    current_admin: User = Depends(get_current_admin),
+):
+    feeder = await db.feeders.find_one({"id": feeder_id}, {"_id": 0})
+    if not feeder:
+        raise HTTPException(status_code=404, detail="Feeder not found")
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are supported")
+    content = await file.read()
+    wb = load_workbook(io.BytesIO(content), data_only=True)
+    ws = wb.active
+    headers = [str(ws.cell(row=1, column=col).value or "").strip() for col in range(1, ws.max_column + 1)]
+
+    def find_col(end_name: str, kind: str):
+        target_tokens = end_name.strip().lower().replace("_", " ").replace("-", " ").replace(".", " ").split()
+        for idx, h in enumerate(headers):
+            h_low = str(h).strip().lower()
+            normalized = h_low.replace("_", " ").replace("-", " ").replace(".", " ")
+            tokens = normalized.split()
+            if all(t in tokens for t in target_tokens) and kind in tokens and "final" in tokens:
+                return idx + 1
+        return None
+
+    def find_generic_col(end_label: str, kind: str):
+        end_label = end_label.strip().lower()
+        for idx, h in enumerate(headers):
+            h_low = str(h).strip().lower()
+            normalized = h_low.replace("_", " ").replace("-", " ").replace(".", " ")
+            tokens = normalized.split()
+            if end_label in tokens and kind in tokens and "final" in tokens:
+                return idx + 1
+        return None
+
+    end1_imp_col = find_col(feeder["end1_name"], "import") or find_generic_col("end1", "import")
+    end1_exp_col = find_col(feeder["end1_name"], "export") or find_generic_col("end1", "export")
+    end2_imp_col = find_col(feeder["end2_name"], "import") or find_generic_col("end2", "import")
+    end2_exp_col = find_col(feeder["end2_name"], "export") or find_generic_col("end2", "export")
+
+    preview: list[dict[str, Any]] = []
+
+    for row in range(2, ws.max_row + 1):
+        date_cell = ws.cell(row=row, column=1).value
+        if not date_cell:
+            continue
+        if isinstance(date_cell, datetime):
+            date_str = date_cell.date().isoformat()
+        else:
+            val_str = str(date_cell).strip()
+            formats = [
+                "%Y-%m-%d",
+                "%d-%m-%Y",
+                "%d-%b-%y",
+                "%d-%b-%Y",
+                "%d/%m/%Y",
+                "%m/%d/%Y",
+                "%d.%m.%Y",
+            ]
+            parsed = False
+            for fmt in formats:
+                try:
+                    date_str = datetime.strptime(val_str, fmt).date().isoformat()
+                    parsed = True
+                    break
+                except Exception:
+                    continue
+            if not parsed:
+                continue
+
+        def get_float(v):
+            try:
+                return float(v) if v is not None and str(v).strip() != "" else None
+            except Exception:
+                return None
+
+        e1i = get_float(ws.cell(row=row, column=end1_imp_col).value) if end1_imp_col else None
+        e1e = get_float(ws.cell(row=row, column=end1_exp_col).value) if end1_exp_col else None
+        e2i = get_float(ws.cell(row=row, column=end2_imp_col).value) if end2_imp_col else None
+        e2e = get_float(ws.cell(row=row, column=end2_exp_col).value) if end2_exp_col else None
+        if e1i is None and e1e is None and e2i is None and e2e is None:
+            continue
+        preview.append(
+            {
+                "date": date_str,
+                "end1_import_final": e1i,
+                "end1_export_final": e1e,
+                "end2_import_final": e2i,
+                "end2_export_final": e2e,
+            }
+        )
+
+    payload: dict[str, Any] = {
+        "feeder_id": feeder_id,
+        "entries": preview,
+        "overwrite": overwrite,
+        "year": year,
+        "month": month,
+    }
+    return await admin_bulk_import_line_losses(payload=payload, current_admin=current_admin)
+
+
+@api_router.post("/admin/bulk-import/line-losses/excel-preview/{feeder_id}")
+async def admin_bulk_import_line_losses_excel_preview(
+    feeder_id: str,
+    year: int | None = None,
+    month: int | None = None,
+    file: UploadFile = File(...),
+    current_admin: User = Depends(get_current_admin),
+):
+    feeder = await db.feeders.find_one({"id": feeder_id}, {"_id": 0})
+    if not feeder:
+        raise HTTPException(status_code=404, detail="Feeder not found")
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are supported")
+    content = await file.read()
+    wb = load_workbook(io.BytesIO(content), data_only=True)
+    ws = wb.active
+    headers = [str(ws.cell(row=1, column=col).value or "").strip() for col in range(1, ws.max_column + 1)]
+
+    def find_col(end_name: str, kind: str):
+        target_tokens = end_name.strip().lower().replace("_", " ").replace("-", " ").replace(".", " ").split()
+        for idx, h in enumerate(headers):
+            h_low = str(h).strip().lower()
+            normalized = h_low.replace("_", " ").replace("-", " ").replace(".", " ")
+            tokens = normalized.split()
+            if all(t in tokens for t in target_tokens) and kind in tokens and "final" in tokens:
+                return idx + 1
+        return None
+
+    def find_generic_col(end_label: str, kind: str):
+        end_label = end_label.strip().lower()
+        for idx, h in enumerate(headers):
+            h_low = str(h).strip().lower()
+            normalized = h_low.replace("_", " ").replace("-", " ").replace(".", " ")
+            tokens = normalized.split()
+            if end_label in tokens and kind in tokens and "final" in tokens:
+                return idx + 1
+        return None
+
+    end1_imp_col = find_col(feeder["end1_name"], "import") or find_generic_col("end1", "import")
+    end1_exp_col = find_col(feeder["end1_name"], "export") or find_generic_col("end1", "export")
+    end2_imp_col = find_col(feeder["end2_name"], "import") or find_generic_col("end2", "import")
+    end2_exp_col = find_col(feeder["end2_name"], "export") or find_generic_col("end2", "export")
+
+    preview: list[dict[str, Any]] = []
+
+    for row in range(2, ws.max_row + 1):
+        date_cell = ws.cell(row=row, column=1).value
+        if not date_cell:
+            continue
+        if isinstance(date_cell, datetime):
+            date_str = date_cell.date().isoformat()
+        else:
+            val_str = str(date_cell).strip()
+            formats = [
+                "%Y-%m-%d",
+                "%d-%m-%Y",
+                "%d-%b-%y",
+                "%d-%b-%Y",
+                "%d/%m/%Y",
+                "%m/%d/%Y",
+                "%d.%m.%Y",
+            ]
+            parsed = False
+            for fmt in formats:
+                try:
+                    date_str = datetime.strptime(val_str, fmt).date().isoformat()
+                    parsed = True
+                    break
+                except Exception:
+                    continue
+            if not parsed:
+                continue
+
+        def get_float(v):
+            try:
+                return float(v) if v is not None and str(v).strip() != "" else None
+            except Exception:
+                return None
+
+        e1i = get_float(ws.cell(row=row, column=end1_imp_col).value) if end1_imp_col else None
+        e1e = get_float(ws.cell(row=row, column=end1_exp_col).value) if end1_exp_col else None
+        e2i = get_float(ws.cell(row=row, column=end2_imp_col).value) if end2_imp_col else None
+        e2e = get_float(ws.cell(row=row, column=end2_exp_col).value) if end2_exp_col else None
+        if e1i is None and e1e is None and e2i is None and e2e is None:
+            continue
+
+        existing = await db.entries.find_one({"feeder_id": feeder_id, "date": date_str})
+
+        item = {
+            "date": date_str,
+            "end1_import_final": e1i,
+            "end1_export_final": e1e,
+            "end2_import_final": e2i,
+            "end2_export_final": e2e,
+            "exists": bool(existing),
+        }
+
+        preview.append(item)
+
+    if year is not None or month is not None:
+        year_val = year
+        month_val = month
+        if year_val is not None and month_val is not None:
+            filtered: list[dict[str, Any]] = []
+            for item in preview:
+                d = item.get("date")
+                if not d:
+                    continue
+                try:
+                    dt = datetime.strptime(d, "%Y-%m-%d")
+                except Exception:
+                    continue
+                if dt.year == year_val and dt.month == month_val:
+                    filtered.append(item)
+            preview = filtered
+
+    return preview
+
+@api_router.post("/admin/bulk-import/energy/excel/{sheet_id}")
+async def admin_bulk_import_energy_excel(
+    sheet_id: str,
+    year: int | None = None,
+    month: int | None = None,
+    overwrite: bool = False,
+    file: UploadFile = File(...),
+    current_admin: User = Depends(get_current_admin),
+):
+    sheet = await db.energy_sheets.find_one({"id": sheet_id}, {"_id": 0})
+    if not sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+    meters = await db.energy_meters.find({"sheet_id": sheet_id}, {"_id": 0}).to_list(100)
+    if not meters:
+        raise HTTPException(status_code=400, detail="No meters configured for this sheet")
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are supported")
+
+    content = await file.read()
+    wb = load_workbook(io.BytesIO(content), data_only=True)
+    ws = wb.active
+
+    headers = [str(ws.cell(row=1, column=col).value or "").strip() for col in range(1, ws.max_column + 1)]
+
+    def find_final_col(meter_name: str):
+        target = meter_name.strip().lower()
+        for idx, h in enumerate(headers):
+            h_low = h.strip().lower()
+            if h_low == f"{target} final":
+                return idx + 1
+            normalized = h_low.replace("_", " ").replace("-", " ").replace(".", " ")
+            tokens = normalized.split()
+            if target in tokens and "final" in tokens:
+                return idx + 1
+        return None
+
+    meter_final_cols: dict[str, int] = {}
+    for m in meters:
+        col = find_final_col(m["name"])
+        if col:
+            meter_final_cols[m["id"]] = col
+
+    preview: list[dict[str, Any]] = []
+
+    for row in range(2, ws.max_row + 1):
+        date_cell = ws.cell(row=row, column=1).value
+        if not date_cell:
+            continue
+        if isinstance(date_cell, datetime):
+            date_str = date_cell.date().isoformat()
+        else:
+            val_str = str(date_cell).strip()
+            formats = [
+                "%Y-%m-%d",
+                "%d-%m-%Y",
+                "%d-%b-%y",
+                "%d-%b-%Y",
+                "%d/%m/%Y",
+                "%m/%d/%Y",
+                "%d.%m.%Y",
+            ]
+            parsed = False
+            for fmt in formats:
+                try:
+                    date_str = datetime.strptime(val_str, fmt).date().isoformat()
+                    parsed = True
+                    break
+                except Exception:
+                    continue
+            if not parsed:
+                continue
+
+        readings: list[dict[str, Any]] = []
+        for meter_id, col in meter_final_cols.items():
+            val = ws.cell(row=row, column=col).value
+            try:
+                final = float(val) if val is not None else None
+            except Exception:
+                final = None
+            if final is not None:
+                readings.append({"meter_id": meter_id, "final": final})
+
+        if not readings:
+            continue
+
+        preview.append({"date": date_str, "readings": readings})
+
+    payload: dict[str, Any] = {
+        "sheet_id": sheet_id,
+        "entries": preview,
+        "overwrite": overwrite,
+        "year": year,
+        "month": month,
+    }
+    return await admin_bulk_import_energy(payload=payload, current_admin=current_admin)
+
+
+@api_router.post("/admin/bulk-import/energy/excel-preview/{sheet_id}")
+async def admin_bulk_import_energy_excel_preview(
+    sheet_id: str,
+    year: int | None = None,
+    month: int | None = None,
+    file: UploadFile = File(...),
+    current_admin: User = Depends(get_current_admin),
+):
+    sheet = await db.energy_sheets.find_one({"id": sheet_id}, {"_id": 0})
+    if not sheet:
+        raise HTTPException(status_code=404, detail="Sheet not found")
+    meters = await db.energy_meters.find({"sheet_id": sheet_id}, {"_id": 0}).to_list(100)
+    if not meters:
+        raise HTTPException(status_code=400, detail="No meters configured for this sheet")
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are supported")
+
+    content = await file.read()
+    wb = load_workbook(io.BytesIO(content), data_only=True)
+    ws = wb.active
+
+    headers = [str(ws.cell(row=1, column=col).value or "").strip() for col in range(1, ws.max_column + 1)]
+
+    def find_final_col(meter_name: str):
+        target = meter_name.strip().lower()
+        for idx, h in enumerate(headers):
+            h_low = h.strip().lower()
+            if h_low == f"{target} final":
+                return idx + 1
+            normalized = h_low.replace("_", " ").replace("-", " ").replace(".", " ")
+            tokens = normalized.split()
+            if target in tokens and "final" in tokens:
+                return idx + 1
+        return None
+
+    meter_final_cols: dict[str, int] = {}
+    for m in meters:
+        col = find_final_col(m["name"])
+        if col:
+            meter_final_cols[m["id"]] = col
+
+    preview: list[dict[str, Any]] = []
+
+    for row in range(2, ws.max_row + 1):
+        date_cell = ws.cell(row=row, column=1).value
+        if not date_cell:
+            continue
+        if isinstance(date_cell, datetime):
+            date_str = date_cell.date().isoformat()
+        else:
+            val_str = str(date_cell).strip()
+            formats = [
+                "%Y-%m-%d",
+                "%d-%m-%Y",
+                "%d-%b-%y",
+                "%d-%b-%Y",
+                "%d/%m/%Y",
+                "%m/%d/%Y",
+                "%d.%m.%Y",
+            ]
+            parsed = False
+            for fmt in formats:
+                try:
+                    date_str = datetime.strptime(val_str, fmt).date().isoformat()
+                    parsed = True
+                    break
+                except Exception:
+                    continue
+            if not parsed:
+                continue
+
+        readings: list[dict[str, Any]] = []
+        for meter_id, col in meter_final_cols.items():
+            val = ws.cell(row=row, column=col).value
+            try:
+                final = float(val) if val is not None else None
+            except Exception:
+                final = None
+            if final is not None:
+                readings.append({"meter_id": meter_id, "final": final})
+
+        if not readings:
+            continue
+
+        existing = await db.energy_entries.find_one({"sheet_id": sheet_id, "date": date_str})
+
+        item = {
+            "date": date_str,
+            "readings": readings,
+            "exists": bool(existing),
+        }
+
+        preview.append(item)
+
+    if year is not None or month is not None:
+        year_val = year
+        month_val = month
+        if year_val is not None and month_val is not None:
+            filtered: list[dict[str, Any]] = []
+            for item in preview:
+                d = item.get("date")
+                if not d:
+                    continue
+                try:
+                    dt = datetime.strptime(d, "%Y-%m-%d")
+                except Exception:
+                    continue
+                if dt.year == year_val and dt.month == month_val:
+                    filtered.append(item)
+            preview = filtered
+
+    return preview
+
+@api_router.post("/admin/bulk-import/max-min/excel/{feeder_id}")
+async def admin_bulk_import_max_min_excel(
+    feeder_id: str,
+    year: int | None = None,
+    month: int | None = None,
+    overwrite: bool = False,
+    file: UploadFile = File(...),
+    current_admin: User = Depends(get_current_admin),
+):
+    feeder = await db.max_min_feeders.find_one({"id": feeder_id}, {"_id": 0})
+    if not feeder:
+        raise HTTPException(status_code=404, detail="Feeder not found")
+    filename = file.filename or ""
+    if not filename.lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are supported")
+    content = await file.read()
+    wb = load_workbook(io.BytesIO(content), data_only=True)
+    ws = wb.active
+    headers = [str(ws.cell(row=1, column=col).value or "").strip() for col in range(1, ws.max_column + 1)]
+
+    def _tokens(h: str) -> list[str]:
+        return (
+            h.lower()
+            .replace("_", " ")
+            .replace("-", " ")
+            .replace(".", " ")
+            .replace("(", " ")
+            .replace(")", " ")
+            .split()
+        )
+
+    def _find_col(required: set[str]) -> int | None:
+        for idx, h in enumerate(headers):
+            t = _tokens(h)
+            if all(r in t for r in required):
+                return idx + 1
+        return None
+
+    entries: list[dict[str, Any]] = []
+    ict_ids: list[str] = []
+    if feeder["type"] == "bus_station":
+        ict_feeders = await db.max_min_feeders.find({"type": "ict_feeder"}, {"id": 1}).to_list(None)
+        ict_ids = [f["id"] for f in ict_feeders]
+
+    for row in range(2, ws.max_row + 1):
+        date_cell = ws.cell(row=row, column=1).value
+        if not date_cell:
+            continue
+        if isinstance(date_cell, datetime):
+            date_str = date_cell.date().isoformat()
+        else:
+            val_str = str(date_cell).strip()
+            fmts = ["%Y-%m-%d", "%d-%m-%Y", "%d-%b-%y", "%d-%b-%Y", "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y"]
+            parsed = False
+            for fmt in fmts:
+                try:
+                    date_str = datetime.strptime(val_str, fmt).date().isoformat()
+                    parsed = True
+                    break
+                except Exception:
+                    continue
+            if not parsed:
+                continue
+        data: dict[str, Any] = {}
+        if feeder["type"] == "bus_station":
+            v400_max_col = _find_col({"max", "bus", "voltage", "400kv"}) or _find_col({"max", "400kv"})
+            v220_max_col = _find_col({"max", "bus", "voltage", "220kv"}) or _find_col({"max", "220kv"})
+            v400_min_col = _find_col({"min", "bus", "voltage", "400kv"}) or _find_col({"min", "400kv"})
+            v220_min_col = _find_col({"min", "bus", "voltage", "220kv"}) or _find_col({"min", "220kv"})
+            max_time_col = _find_col({"max", "time"})
+            min_time_col = _find_col({"min", "time"})
+            load_max_mw_col = _find_col({"station", "load", "max", "mw"}) or _find_col({"max", "mw"})
+            load_mvar_col = _find_col({"station", "load", "mvar"}) or _find_col({"mvar"})
+            load_time_col = _find_col({"station", "load", "time"})
+
+            def getf(c: int | None) -> float | None:
+                try:
+                    v = ws.cell(row=row, column=c).value if c else None
+                    return float(v) if v is not None and str(v).strip() != "" else None
+                except Exception:
+                    return None
+
+            def gets(c: int | None) -> str | None:
+                v = ws.cell(row=row, column=c).value if c else None
+                return str(v).strip() if v is not None else None
+
+            max_time = gets(max_time_col)
+            min_time = gets(min_time_col)
+
+            station_time = gets(load_time_col)
+            station_max_mw = getf(load_max_mw_col)
+            station_mvar = getf(load_mvar_col)
+
+            if ict_ids:
+                ict_entries = await db.max_min_entries.find(
+                    {"feeder_id": {"$in": ict_ids}, "date": date_str},
+                    {"data.max": 1},
+                ).to_list(None)
+
+                times: list[str] = []
+                total_mw = 0.0
+                total_mvar = 0.0
+                has_ict_data = False
+
+                for e in ict_entries:
+                    d = e.get("data", {}).get("max", {})
+                    t = d.get("time")
+                    mw = d.get("mw")
+                    mvar = d.get("mvar")
+                    if t:
+                        times.append(t)
+                    if mw is not None:
+                        try:
+                            total_mw += float(mw)
+                        except Exception:
+                            pass
+                        has_ict_data = True
+                    if mvar is not None:
+                        try:
+                            total_mvar += float(mvar)
+                        except Exception:
+                            pass
+
+                if has_ict_data:
+                    station_max_mw = total_mw
+                    station_mvar = total_mvar
+
+                times = [t for t in times if t]
+                if times:
+                    from collections import Counter
+
+                    station_time = Counter(times).most_common(1)[0][0]
+
+            data = {
+                "max_bus_voltage_400kv": {"value": getf(v400_max_col), "time": max_time},
+                "max_bus_voltage_220kv": {"value": getf(v220_max_col), "time": max_time},
+                "min_bus_voltage_400kv": {"value": getf(v400_min_col), "time": min_time},
+                "min_bus_voltage_220kv": {"value": getf(v220_min_col), "time": min_time},
+                "station_load": {"max_mw": station_max_mw, "mvar": station_mvar, "time": station_time},
+            }
+            if all(
+                x is None
+                for x in [
+                    data["max_bus_voltage_400kv"]["value"],
+                    data["max_bus_voltage_220kv"]["value"],
+                    data["min_bus_voltage_400kv"]["value"],
+                    data["min_bus_voltage_220kv"]["value"],
+                    data["station_load"]["max_mw"],
+                    data["station_load"]["mvar"],
+                ]
+            ):
+                continue
+        elif feeder["type"] == "ict_feeder":
+            max_amps_col = _find_col({"max", "amps"})
+            max_mw_col = _find_col({"max", "mw"})
+            max_mvar_col = _find_col({"max", "mvar"})
+            max_time_col = _find_col({"max", "time"})
+            min_amps_col = _find_col({"min", "amps"})
+            min_mw_col = _find_col({"min", "mw"})
+            min_mvar_col = _find_col({"min", "mvar"})
+            min_time_col = _find_col({"min", "time"})
+            avg_amps_col = _find_col({"avg", "amps"})
+            avg_mw_col = _find_col({"avg", "mw"})
+
+            def getf(c: int | None) -> float | None:
+                try:
+                    v = ws.cell(row=row, column=c).value if c else None
+                    return float(v) if v is not None and str(v).strip() != "" else None
+                except Exception:
+                    return None
+
+            def gets(c: int | None) -> str | None:
+                v = ws.cell(row=row, column=c).value if c else None
+                return str(v).strip() if v is not None else None
+
+            max_amps_val = getf(max_amps_col)
+            min_amps_val = getf(min_amps_col)
+            avg_amps_val = getf(avg_amps_col)
+            if avg_amps_val is None and max_amps_val is not None and min_amps_val is not None:
+                avg_amps_val = (max_amps_val + min_amps_val) / 2
+
+            max_mw_val = getf(max_mw_col)
+            min_mw_val = getf(min_mw_col)
+            avg_mw_val = getf(avg_mw_col)
+            if avg_mw_val is None and max_mw_val is not None and min_mw_val is not None:
+                avg_mw_val = (max_mw_val + min_mw_val) / 2
+
+            data = {
+                "max": {
+                    "amps": max_amps_val,
+                    "mw": max_mw_val,
+                    "mvar": getf(max_mvar_col),
+                    "time": gets(max_time_col),
+                },
+                "min": {
+                    "amps": min_amps_val,
+                    "mw": min_mw_val,
+                    "mvar": getf(min_mvar_col),
+                    "time": gets(min_time_col),
+                },
+                "avg": {"amps": avg_amps_val, "mw": avg_mw_val},
+            }
+            if all(
+                x is None
+                for x in [
+                    data["max"]["amps"],
+                    data["max"]["mw"],
+                    data["min"]["amps"],
+                    data["min"]["mw"],
+                    data["avg"]["amps"],
+                    data["avg"]["mw"],
+                ]
+            ):
+                continue
+        else:
+            max_amps_col = _find_col({"max", "amps"})
+            max_mw_col = _find_col({"max", "mw"})
+            max_time_col = _find_col({"max", "time"})
+            min_amps_col = _find_col({"min", "amps"})
+            min_mw_col = _find_col({"min", "mw"})
+            min_time_col = _find_col({"min", "time"})
+            avg_amps_col = _find_col({"avg", "amps"})
+            avg_mw_col = _find_col({"avg", "mw"})
+
+            def getf(c: int | None) -> float | None:
+                try:
+                    v = ws.cell(row=row, column=c).value if c else None
+                    return float(v) if v is not None and str(v).strip() != "" else None
+                except Exception:
+                    return None
+
+            def gets(c: int | None) -> str | None:
+                v = ws.cell(row=row, column=c).value if c else None
+                return str(v).strip() if v is not None else None
+
+            max_amps_val = getf(max_amps_col)
+            min_amps_val = getf(min_amps_col)
+            avg_amps_val = getf(avg_amps_col)
+            if avg_amps_val is None and max_amps_val is not None and min_amps_val is not None:
+                avg_amps_val = (max_amps_val + min_amps_val) / 2
+
+            max_mw_val = getf(max_mw_col)
+            min_mw_val = getf(min_mw_col)
+            avg_mw_val = getf(avg_mw_col)
+            if avg_mw_val is None and max_mw_val is not None and min_mw_val is not None:
+                avg_mw_val = (max_mw_val + min_mw_val) / 2
+
+            data = {
+                "max": {"amps": max_amps_val, "mw": max_mw_val, "time": gets(max_time_col)},
+                "min": {"amps": min_amps_val, "mw": min_mw_val, "time": gets(min_time_col)},
+                "avg": {"amps": avg_amps_val, "mw": avg_mw_val},
+            }
+            if all(
+                x is None
+                for x in [
+                    data["max"]["amps"],
+                    data["max"]["mw"],
+                    data["min"]["amps"],
+                    data["min"]["mw"],
+                    data["avg"]["amps"],
+                    data["avg"]["mw"],
+                ]
+            ):
+                continue
+        entries.append({"date": date_str, "data": data})
+
+    payload: dict[str, Any] = {
+        "feeder_id": feeder_id,
+        "entries": entries,
+        "overwrite": overwrite,
+        "year": year,
+        "month": month,
+    }
+    return await admin_bulk_import_max_min(payload=payload, current_admin=current_admin)
+
+
+@api_router.post("/admin/bulk-import/max-min/excel-preview/{feeder_id}")
+async def admin_bulk_import_max_min_excel_preview(
+    feeder_id: str,
+    year: int | None = None,
+    month: int | None = None,
+    file: UploadFile = File(...),
+    current_admin: User = Depends(get_current_admin),
+):
+    feeder = await db.max_min_feeders.find_one({"id": feeder_id}, {"_id": 0})
+    if not feeder:
+        raise HTTPException(status_code=404, detail="Feeder not found")
+    filename = file.filename or ""
+    if not filename.lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are supported")
+    content = await file.read()
+    wb = load_workbook(io.BytesIO(content), data_only=True)
+    ws = wb.active
+    headers = [str(ws.cell(row=1, column=col).value or "").strip() for col in range(1, ws.max_column + 1)]
+
+    def _tokens(h: str) -> list[str]:
+        return (
+            h.lower()
+            .replace("_", " ")
+            .replace("-", " ")
+            .replace(".", " ")
+            .replace("(", " ")
+            .replace(")", " ")
+            .split()
+        )
+
+    def _find_col(required: set[str]) -> int | None:
+        for idx, h in enumerate(headers):
+            t = _tokens(h)
+            if all(r in t for r in required):
+                return idx + 1
+        return None
+
+    entries: list[dict[str, Any]] = []
+    ict_ids: list[str] = []
+    if feeder["type"] == "bus_station":
+        ict_feeders = await db.max_min_feeders.find({"type": "ict_feeder"}, {"id": 1}).to_list(None)
+        ict_ids = [f["id"] for f in ict_feeders]
+
+    for row in range(2, ws.max_row + 1):
+        date_cell = ws.cell(row=row, column=1).value
+        if not date_cell:
+            continue
+        if isinstance(date_cell, datetime):
+            date_str = date_cell.date().isoformat()
+        else:
+            val_str = str(date_cell).strip()
+            fmts = ["%Y-%m-%d", "%d-%m-%Y", "%d-%b-%y", "%d-%b-%Y", "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y"]
+            parsed = False
+            for fmt in fmts:
+                try:
+                    date_str = datetime.strptime(val_str, fmt).date().isoformat()
+                    parsed = True
+                    break
+                except Exception:
+                    continue
+            if not parsed:
+                continue
+        data: dict[str, Any] = {}
+        if feeder["type"] == "bus_station":
+            v400_max_col = _find_col({"max", "bus", "voltage", "400kv"}) or _find_col({"max", "400kv"})
+            v220_max_col = _find_col({"max", "bus", "voltage", "220kv"}) or _find_col({"max", "220kv"})
+            v400_min_col = _find_col({"min", "bus", "voltage", "400kv"}) or _find_col({"min", "400kv"})
+            v220_min_col = _find_col({"min", "bus", "voltage", "220kv"}) or _find_col({"min", "220kv"})
+            max_time_col = _find_col({"max", "time"})
+            min_time_col = _find_col({"min", "time"})
+            load_max_mw_col = _find_col({"station", "load", "max", "mw"}) or _find_col({"max", "mw"})
+            load_mvar_col = _find_col({"station", "load", "mvar"}) or _find_col({"mvar"})
+            load_time_col = _find_col({"station", "load", "time"})
+
+            def getf(c: int | None) -> float | None:
+                try:
+                    v = ws.cell(row=row, column=c).value if c else None
+                    return float(v) if v is not None and str(v).strip() != "" else None
+                except Exception:
+                    return None
+
+            def gets(c: int | None) -> str | None:
+                v = ws.cell(row=row, column=c).value if c else None
+                return str(v).strip() if v is not None else None
+
+            max_time = gets(max_time_col)
+            min_time = gets(min_time_col)
+
+            station_time = gets(load_time_col)
+            station_max_mw = getf(load_max_mw_col)
+            station_mvar = getf(load_mvar_col)
+
+            if ict_ids:
+                ict_entries = await db.max_min_entries.find(
+                    {"feeder_id": {"$in": ict_ids}, "date": date_str},
+                    {"data.max": 1},
+                ).to_list(None)
+
+                times: list[str] = []
+                total_mw = 0.0
+                total_mvar = 0.0
+                has_ict_data = False
+
+                for e in ict_entries:
+                    d = e.get("data", {}).get("max", {})
+                    t = d.get("time")
+                    mw = d.get("mw")
+                    mvar = d.get("mvar")
+                    if t:
+                        times.append(t)
+                    if mw is not None:
+                        try:
+                            total_mw += float(mw)
+                        except Exception:
+                            pass
+                        has_ict_data = True
+                    if mvar is not None:
+                        try:
+                            total_mvar += float(mvar)
+                        except Exception:
+                            pass
+
+                if has_ict_data:
+                    station_max_mw = total_mw
+                    station_mvar = total_mvar
+
+                times = [t for t in times if t]
+                if times:
+                    from collections import Counter
+
+                    station_time = Counter(times).most_common(1)[0][0]
+
+            data = {
+                "max_bus_voltage_400kv": {"value": getf(v400_max_col), "time": max_time},
+                "max_bus_voltage_220kv": {"value": getf(v220_max_col), "time": max_time},
+                "min_bus_voltage_400kv": {"value": getf(v400_min_col), "time": min_time},
+                "min_bus_voltage_220kv": {"value": getf(v220_min_col), "time": min_time},
+                "station_load": {"max_mw": station_max_mw, "mvar": station_mvar, "time": station_time},
+            }
+            if all(
+                x is None
+                for x in [
+                    data["max_bus_voltage_400kv"]["value"],
+                    data["max_bus_voltage_220kv"]["value"],
+                    data["min_bus_voltage_400kv"]["value"],
+                    data["min_bus_voltage_220kv"]["value"],
+                    data["station_load"]["max_mw"],
+                    data["station_load"]["mvar"],
+                ]
+            ):
+                continue
+        elif feeder["type"] == "ict_feeder":
+            max_amps_col = _find_col({"max", "amps"})
+            max_mw_col = _find_col({"max", "mw"})
+            max_mvar_col = _find_col({"max", "mvar"})
+            max_time_col = _find_col({"max", "time"})
+            min_amps_col = _find_col({"min", "amps"})
+            min_mw_col = _find_col({"min", "mw"})
+            min_mvar_col = _find_col({"min", "mvar"})
+            min_time_col = _find_col({"min", "time"})
+            avg_amps_col = _find_col({"avg", "amps"})
+            avg_mw_col = _find_col({"avg", "mw"})
+
+            def getf(c: int | None) -> float | None:
+                try:
+                    v = ws.cell(row=row, column=c).value if c else None
+                    return float(v) if v is not None and str(v).strip() != "" else None
+                except Exception:
+                    return None
+
+            def gets(c: int | None) -> str | None:
+                v = ws.cell(row=row, column=c).value if c else None
+                return str(v).strip() if v is not None else None
+
+            max_amps_val = getf(max_amps_col)
+            min_amps_val = getf(min_amps_col)
+            avg_amps_val = getf(avg_amps_col)
+            if avg_amps_val is None and max_amps_val is not None and min_amps_val is not None:
+                avg_amps_val = (max_amps_val + min_amps_val) / 2
+
+            max_mw_val = getf(max_mw_col)
+            min_mw_val = getf(min_mw_col)
+            avg_mw_val = getf(avg_mw_col)
+            if avg_mw_val is None and max_mw_val is not None and min_mw_val is not None:
+                avg_mw_val = (max_mw_val + min_mw_val) / 2
+
+            data = {
+                "max": {
+                    "amps": max_amps_val,
+                    "mw": max_mw_val,
+                    "mvar": getf(max_mvar_col),
+                    "time": gets(max_time_col),
+                },
+                "min": {
+                    "amps": min_amps_val,
+                    "mw": min_mw_val,
+                    "mvar": getf(min_mvar_col),
+                    "time": gets(min_time_col),
+                },
+                "avg": {"amps": avg_amps_val, "mw": avg_mw_val},
+            }
+            if all(
+                x is None
+                for x in [
+                    data["max"]["amps"],
+                    data["max"]["mw"],
+                    data["min"]["amps"],
+                    data["min"]["mw"],
+                    data["avg"]["amps"],
+                    data["avg"]["mw"],
+                ]
+            ):
+                continue
+        else:
+            max_amps_col = _find_col({"max", "amps"})
+            max_mw_col = _find_col({"max", "mw"})
+            max_time_col = _find_col({"max", "time"})
+            min_amps_col = _find_col({"min", "amps"})
+            min_mw_col = _find_col({"min", "mw"})
+            min_time_col = _find_col({"min", "time"})
+            avg_amps_col = _find_col({"avg", "amps"})
+            avg_mw_col = _find_col({"avg", "mw"})
+
+            def getf(c: int | None) -> float | None:
+                try:
+                    v = ws.cell(row=row, column=c).value if c else None
+                    return float(v) if v is not None and str(v).strip() != "" else None
+                except Exception:
+                    return None
+
+            def gets(c: int | None) -> str | None:
+                v = ws.cell(row=row, column=c).value if c else None
+                return str(v).strip() if v is not None else None
+
+            max_amps_val = getf(max_amps_col)
+            min_amps_val = getf(min_amps_col)
+            avg_amps_val = getf(avg_amps_col)
+            if avg_amps_val is None and max_amps_val is not None and min_amps_val is not None:
+                avg_amps_val = (max_amps_val + min_amps_val) / 2
+
+            max_mw_val = getf(max_mw_col)
+            min_mw_val = getf(min_mw_col)
+            avg_mw_val = getf(avg_mw_col)
+            if avg_mw_val is None and max_mw_val is not None and min_mw_val is not None:
+                avg_mw_val = (max_mw_val + min_mw_val) / 2
+
+            data = {
+                "max": {"amps": max_amps_val, "mw": max_mw_val, "time": gets(max_time_col)},
+                "min": {"amps": min_amps_val, "mw": min_mw_val, "time": gets(min_time_col)},
+                "avg": {"amps": avg_amps_val, "mw": avg_mw_val},
+            }
+            if all(
+                x is None
+                for x in [
+                    data["max"]["amps"],
+                    data["max"]["mw"],
+                    data["min"]["amps"],
+                    data["min"]["mw"],
+                    data["avg"]["amps"],
+                    data["avg"]["mw"],
+                ]
+            ):
+                continue
+
+        entries.append({"date": date_str, "data": data})
+
+    preview: list[dict[str, Any]] = []
+    for e in entries:
+        date_str = e.get("date")
+        if not date_str:
+            continue
+        existing = await db.max_min_entries.find_one(
+            {"feeder_id": feeder_id, "date": date_str},
+            {"_id": 0},
+        )
+        item = {"date": date_str, "data": e.get("data") or {}, "exists": bool(existing)}
+        preview.append(item)
+
+    if year is not None or month is not None:
+        year_val = year
+        month_val = month
+        if year_val is not None and month_val is not None:
+            filtered_preview: list[dict[str, Any]] = []
+            for item in preview:
+                d = item.get("date")
+                if not d:
+                    continue
+                try:
+                    dt = datetime.strptime(d, "%Y-%m-%d")
+                except Exception:
+                    continue
+                if dt.year == year_val and dt.month == month_val:
+                    filtered_preview.append(item)
+            preview = filtered_preview
+
+    return preview
+
+
+@api_router.post("/admin/bulk-import/interruptions/excel/{feeder_id}")
+async def admin_bulk_import_interruptions_excel(
+    feeder_id: str,
+    year: int | None = None,
+    month: int | None = None,
+    overwrite: bool = False,
+    file: UploadFile = File(...),
+    current_admin: User = Depends(get_current_admin),
+):
+    feeder = await db.max_min_feeders.find_one({"id": feeder_id}, {"_id": 0})
+    if not feeder:
+        raise HTTPException(status_code=404, detail="Feeder not found")
+    if feeder.get("type") not in [
+        "feeder_400kv",
+        "feeder_220kv",
+        "ict_feeder",
+        "reactor_feeder",
+        "bay_feeder",
+    ]:
+        raise HTTPException(
+            status_code=400,
+            detail="Interruptions supported only for 400KV, 220KV, ICT, Reactor and Bay feeders",
+        )
+    filename = file.filename or ""
+    if not filename.lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are supported")
+    content = await file.read()
+    wb = load_workbook(io.BytesIO(content), data_only=True)
+    ws = wb.active
+    headers = [str(ws.cell(row=1, column=col).value or "").strip() for col in range(1, ws.max_column + 1)]
+
+    def tokens(h: str) -> list[str]:
+        return (
+            h.lower()
+            .replace("_", " ")
+            .replace("-", " ")
+            .replace(".", " ")
+            .replace("/", " ")
+            .split()
+        )
+
+    def find_col(*required: str) -> int | None:
+        required_set = {r for r in required if r}
+        for idx, h in enumerate(headers):
+            t = tokens(h)
+            if all(r in t for r in required_set):
+                return idx + 1
+        return None
+
+    date_col = find_col("date")
+    from_col = find_col("time", "from") or find_col("from")
+    to_col = find_col("time", "to") or find_col("to")
+    cause_col = find_col("cause", "interruption") or find_col("cause")
+    relay_col = find_col("relay") or find_col("indications") or find_col("lc", "work")
+    breakdown_col = find_col("breakdown")
+    fault_ident_col = find_col("fault", "identified") or find_col("identified")
+    fault_location_col = find_col("fault", "location") or find_col("location")
+    remarks_col = find_col("remarks") or find_col("remark")
+    action_col = find_col("action", "taken") or find_col("action")
+
+    def parse_date_value(v: Any) -> str | None:
+        if not v:
+            return None
+        if isinstance(v, datetime):
+            return v.date().isoformat()
+        s = str(v).strip()
+        fmts = ["%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y"]
+        for fmt in fmts:
+            try:
+                return datetime.strptime(s, fmt).date().isoformat()
+            except Exception:
+                continue
+        return None
+
+    def parse_time_value(v: Any) -> str | None:
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        return format_time(s)
+
+    entries: list[dict[str, Any]] = []
+    for row in range(2, ws.max_row + 1):
+        if not date_col or not from_col or not to_col:
+            break
+        date_val = ws.cell(row=row, column=date_col).value
+        if not date_val:
+            continue
+        date_str = parse_date_value(date_val)
+        if not date_str:
+            continue
+        start_raw = ws.cell(row=row, column=from_col).value
+        end_raw = ws.cell(row=row, column=to_col).value
+        if not start_raw or not end_raw:
+            continue
+        start_time = parse_time_value(start_raw)
+        if not start_time:
+            continue
+        end_s = str(end_raw).strip()
+        if not end_s:
+            continue
+        end_date_str: str | None
+        end_time_part: str
+        if " " in end_s:
+            date_part, time_part = end_s.rsplit(" ", 1)
+            end_date_str = parse_date_value(date_part) or date_str
+            end_time_part = time_part
+        else:
+            end_date_str = date_str
+            end_time_part = end_s
+        end_time = parse_time_value(end_time_part)
+        if not end_time:
+            continue
+        duration_minutes: float | None = None
+        try:
+            start_dt = datetime.strptime(f"{date_str} {start_time}", "%Y-%m-%d %H:%M")
+            end_dt = datetime.strptime(f"{end_date_str} {end_time}", "%Y-%m-%d %H:%M")
+            if end_dt > start_dt:
+                duration_minutes = (end_dt - start_dt).total_seconds() / 60.0
+        except Exception:
+            duration_minutes = None
+
+        cause_val = ws.cell(row=row, column=cause_col).value if cause_col else None
+        relay_val = ws.cell(row=row, column=relay_col).value if relay_col else None
+        breakdown_val = ws.cell(row=row, column=breakdown_col).value if breakdown_col else None
+        fault_ident_val = ws.cell(row=row, column=fault_ident_col).value if fault_ident_col else None
+        fault_location_val = ws.cell(row=row, column=fault_location_col).value if fault_location_col else None
+        remarks_val = ws.cell(row=row, column=remarks_col).value if remarks_col else None
+        action_val = ws.cell(row=row, column=action_col).value if action_col else None
+
+        cause_text = str(cause_val).strip() if cause_val is not None else ""
+        data = {
+            "start_time": start_time,
+            "end_time": end_time,
+            "end_date": end_date_str or date_str,
+            "duration_minutes": duration_minutes,
+            "description": cause_text or (str(remarks_val).strip() if remarks_val is not None else ""),
+            "cause_of_interruption": cause_text or None,
+            "relay_indications_lc_work": relay_val,
+            "breakdown_declared": breakdown_val,
+            "fault_identified_during_patrolling": fault_ident_val,
+            "fault_location": fault_location_val,
+            "remarks": remarks_val,
+            "action_taken": action_val,
+        }
+        entries.append(
+            {
+                "feeder_id": feeder_id,
+                "date": date_str,
+                "start_time": start_time,
+                "end_time": end_time,
+                "end_date": end_date_str or date_str,
+                "duration_minutes": duration_minutes,
+                "description": data["description"],
+                "cause_of_interruption": data["cause_of_interruption"],
+                "relay_indications_lc_work": data["relay_indications_lc_work"],
+                "breakdown_declared": data["breakdown_declared"],
+                "fault_identified_during_patrolling": data["fault_identified_during_patrolling"],
+                "fault_location": data["fault_location"],
+                "remarks": data["remarks"],
+                "action_taken": data["action_taken"],
+            }
+        )
+
+    payload: dict[str, Any] = {
+        "entries": entries,
+        "overwrite": overwrite,
+        "year": year,
+        "month": month,
+    }
+    return await admin_bulk_import_interruptions(payload=payload, current_admin=current_admin)
+
+
+@api_router.post("/admin/bulk-import/interruptions/excel-preview/{feeder_id}")
+async def admin_bulk_import_interruptions_excel_preview(
+    feeder_id: str,
+    year: int | None = None,
+    month: int | None = None,
+    file: UploadFile = File(...),
+    current_admin: User = Depends(get_current_admin),
+):
+    feeder = await db.max_min_feeders.find_one({"id": feeder_id}, {"_id": 0})
+    if not feeder:
+        raise HTTPException(status_code=404, detail="Feeder not found")
+    if feeder.get("type") not in [
+        "feeder_400kv",
+        "feeder_220kv",
+        "ict_feeder",
+        "reactor_feeder",
+        "bay_feeder",
+    ]:
+        raise HTTPException(
+            status_code=400,
+            detail="Interruptions supported only for 400KV, 220KV, ICT, Reactor and Bay feeders",
+        )
+    filename = file.filename or ""
+    if not filename.lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are supported")
+    content = await file.read()
+    wb = load_workbook(io.BytesIO(content), data_only=True)
+    ws = wb.active
+    headers = [str(ws.cell(row=1, column=col).value or "").strip() for col in range(1, ws.max_column + 1)]
+
+    def tokens(h: str) -> list[str]:
+        return (
+            h.lower()
+            .replace("_", " ")
+            .replace("-", " ")
+            .replace(".", " ")
+            .replace("/", " ")
+            .split()
+        )
+
+    def find_col(*required: str) -> int | None:
+        required_set = {r for r in required if r}
+        for idx, h in enumerate(headers):
+            t = tokens(h)
+            if all(r in t for r in required_set):
+                return idx + 1
+        return None
+
+    date_col = find_col("date")
+    from_col = find_col("time", "from") or find_col("from")
+    to_col = find_col("time", "to") or find_col("to")
+    cause_col = find_col("cause", "interruption") or find_col("cause")
+    relay_col = find_col("relay") or find_col("indications") or find_col("lc", "work")
+    breakdown_col = find_col("breakdown")
+    fault_ident_col = find_col("fault", "identified") or find_col("identified")
+    fault_location_col = find_col("fault", "location") or find_col("location")
+    remarks_col = find_col("remarks") or find_col("remark")
+    action_col = find_col("action", "taken") or find_col("action")
+
+    def parse_date_value(v: Any) -> str | None:
+        if not v:
+            return None
+        if isinstance(v, datetime):
+            return v.date().isoformat()
+        s = str(v).strip()
+        fmts = ["%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y"]
+        for fmt in fmts:
+            try:
+                return datetime.strptime(s, fmt).date().isoformat()
+            except Exception:
+                continue
+        return None
+
+    def parse_time_value(v: Any) -> str | None:
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        return format_time(s)
+
+    entries: list[dict[str, Any]] = []
+    for row in range(2, ws.max_row + 1):
+        if not date_col or not from_col or not to_col:
+            break
+        date_val = ws.cell(row=row, column=date_col).value
+        if not date_val:
+            continue
+        date_str = parse_date_value(date_val)
+        if not date_str:
+            continue
+        start_raw = ws.cell(row=row, column=from_col).value
+        end_raw = ws.cell(row=row, column=to_col).value
+        if not start_raw or not end_raw:
+            continue
+        start_time = parse_time_value(start_raw)
+        if not start_time:
+            continue
+        end_s = str(end_raw).strip()
+        if not end_s:
+            continue
+        if " " in end_s:
+            date_part, time_part = end_s.rsplit(" ", 1)
+            end_date_str = parse_date_value(date_part) or date_str
+            end_time_part = time_part
+        else:
+            end_date_str = date_str
+            end_time_part = end_s
+        end_time = parse_time_value(end_time_part)
+        if not end_time:
+            continue
+        duration_minutes: float | None = None
+        try:
+            start_dt = datetime.strptime(f"{date_str} {start_time}", "%Y-%m-%d %H:%M")
+            end_dt = datetime.strptime(f"{end_date_str} {end_time}", "%Y-%m-%d %H:%M")
+            if end_dt > start_dt:
+                duration_minutes = (end_dt - start_dt).total_seconds() / 60.0
+        except Exception:
+            duration_minutes = None
+
+        cause_val = ws.cell(row=row, column=cause_col).value if cause_col else None
+        relay_val = ws.cell(row=row, column=relay_col).value if relay_col else None
+        breakdown_val = ws.cell(row=row, column=breakdown_col).value if breakdown_col else None
+        fault_ident_val = ws.cell(row=row, column=fault_ident_col).value if fault_ident_col else None
+        fault_location_val = ws.cell(row=row, column=fault_location_col).value if fault_location_col else None
+        remarks_val = ws.cell(row=row, column=remarks_col).value if remarks_col else None
+        action_val = ws.cell(row=row, column=action_col).value if action_col else None
+
+        cause_text = str(cause_val).strip() if cause_val is not None else ""
+        entries.append(
+            {
+                "feeder_id": feeder_id,
+                "date": date_str,
+                "start_time": start_time,
+                "end_time": end_time,
+                "end_date": end_date_str or date_str,
+                "duration_minutes": duration_minutes,
+                "description": cause_text or (str(remarks_val).strip() if remarks_val is not None else ""),
+                "cause_of_interruption": cause_text or None,
+                "relay_indications_lc_work": relay_val,
+                "breakdown_declared": breakdown_val,
+                "fault_identified_during_patrolling": fault_ident_val,
+                "fault_location": fault_location_val,
+                "remarks": remarks_val,
+                "action_taken": action_val,
+            }
+        )
+
+    preview: list[dict[str, Any]] = []
+    for e in entries:
+        date_str = e.get("date")
+        start_time = e.get("start_time")
+        if not date_str or not start_time:
+            continue
+        existing = await db.interruption_entries.find_one(
+            {"feeder_id": feeder_id, "date": date_str, "data.start_time": start_time},
+            {"_id": 0},
+        )
+        item = dict(e)
+        item["exists"] = bool(existing)
+        preview.append(item)
+
+    if year is not None or month is not None:
+        year_val = year
+        month_val = month
+        if year_val is not None and month_val is not None:
+            filtered: list[dict[str, Any]] = []
+            for item in preview:
+                d = item.get("date")
+                if not d:
+                    continue
+                try:
+                    dt = datetime.strptime(d, "%Y-%m-%d")
+                except Exception:
+                    continue
+                if dt.year == year_val and dt.month == month_val:
+                    filtered.append(item)
+            preview = filtered
+
+    return preview
 
 # Max-Min Data Module Endpoints
 
@@ -9344,6 +10966,1358 @@ async def send_reports_email_endpoint(
         error_msg = traceback.format_exc()
         print(f"Send mail error: {error_msg}")
         return JSONResponse(status_code=500, content={"detail": str(e)})
+
+@api_router.get("/admin/analytics/energy")
+async def admin_energy_analytics(
+    sheet_ids: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    current_admin: User = Depends(get_current_admin),
+):
+    query: dict[str, Any] = {}
+    if sheet_ids:
+        ids = [s for s in sheet_ids.split(",") if s]
+        if ids:
+            query["sheet_id"] = {"$in": ids}
+    if start_date and end_date:
+        query["date"] = {"$gte": start_date, "$lte": end_date}
+    elif start_date:
+        query["date"] = {"$gte": start_date}
+    elif end_date:
+        query["date"] = {"$lte": end_date}
+    entries = await db.energy_entries.find(query, {"_id": 0}).sort("date", 1).to_list(10000)
+    sheets = await db.energy_sheets.find({}, {"_id": 0}).to_list(1000)
+    return {"entries": entries, "sheets": sheets}
+
+
+@api_router.get("/admin/analytics/line-losses")
+async def admin_line_losses_analytics(
+    feeder_ids: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    current_admin: User = Depends(get_current_admin),
+):
+    query: dict[str, Any] = {}
+    if feeder_ids:
+        ids = [f for f in feeder_ids.split(",") if f]
+        if ids:
+            query["feeder_id"] = {"$in": ids}
+    if start_date and end_date:
+        query["date"] = {"$gte": start_date, "$lte": end_date}
+    elif start_date:
+        query["date"] = {"$gte": start_date}
+    elif end_date:
+        query["date"] = {"$lte": end_date}
+    projection = {
+        "_id": 0,
+        "feeder_id": 1,
+        "date": 1,
+        "end1_import_consumption": 1,
+        "end2_import_consumption": 1,
+        "loss_percent": 1,
+    }
+    entries = await db.entries.find(query, projection).sort("date", 1).to_list(10000)
+    return {"entries": entries}
+
+
+@api_router.get("/admin/analytics/max-min")
+async def admin_max_min_analytics(
+    feeder_ids: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    current_admin: User = Depends(get_current_admin),
+):
+    query: dict[str, Any] = {}
+    if feeder_ids:
+        ids = [f for f in feeder_ids.split(",") if f]
+        if ids:
+            query["feeder_id"] = {"$in": ids}
+    if start_date and end_date:
+        query["date"] = {"$gte": start_date, "$lte": end_date}
+    elif start_date:
+        query["date"] = {"$gte": start_date}
+    elif end_date:
+        query["date"] = {"$lte": end_date}
+    entries = await db.max_min_entries.find(query, {"_id": 0}).sort("date", 1).to_list(10000)
+    feeders = await db.max_min_feeders.find({}, {"_id": 0}).to_list(1000)
+    return {"entries": entries, "feeders": feeders}
+
+
+@api_router.get("/admin/analytics/max-min/export")
+async def export_admin_max_min_analytics(
+    feeder_ids: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    columns: Optional[str] = None,
+    current_admin: User = Depends(get_current_admin),
+):
+    try:
+        query: dict[str, Any] = {}
+        if feeder_ids:
+            ids = [f for f in feeder_ids.split(",") if f]
+            if ids:
+                query["feeder_id"] = {"$in": ids}
+        if start_date and end_date:
+            query["date"] = {"$gte": start_date, "$lte": end_date}
+        elif start_date:
+            query["date"] = {"$gte": start_date}
+        elif end_date:
+            query["date"] = {"$lte": end_date}
+
+        entries = await db.max_min_entries.find(query, {"_id": 0}).sort("date", 1).to_list(20000)
+        feeders = await db.max_min_feeders.find({}, {"_id": 0}).to_list(1000)
+        feeder_map: dict[str, dict[str, Any]] = {f["id"]: f for f in feeders if f.get("id")}
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Max-Min Analytics"
+
+        header_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF")
+        header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        all_columns = [
+            ("feeder", "Feeder"),
+            ("maxAmps", "Max Amps"),
+            ("maxMw", "Max MW"),
+            ("date", "Date"),
+            ("maxTime", "Max Time"),
+            ("maxMvar", "Max MVAR"),
+            ("minAmps", "Min Amps"),
+            ("minMw", "Min MW"),
+            ("minMvar", "Min MVAR"),
+            ("minDate", "Min Date"),
+            ("minTime", "Min Time"),
+            ("avgAmps", "Avg Amps"),
+            ("avgMw", "Avg MW"),
+        ]
+
+        if columns:
+            requested = [c.strip() for c in columns.split(",") if c.strip()]
+            selected_keys = [key for key, _ in all_columns if key in requested]
+        else:
+            selected_keys = [key for key, _ in all_columns]
+
+        if not selected_keys:
+            selected_keys = [key for key, _ in all_columns]
+
+        headers = [label for key, label in all_columns if key in selected_keys]
+        ws.append(headers)
+        for cell in ws[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = header_align
+
+        for e in entries:
+            data = e.get("data") or {}
+            max_data = data.get("max") or {}
+            min_data = data.get("min") or {}
+            avg_data = data.get("avg") or {}
+            feeder_id = e.get("feeder_id")
+            feeder = feeder_map.get(feeder_id) or {}
+
+            row: list[Any] = []
+            for key in selected_keys:
+                if key == "date":
+                    row.append(format_date(e.get("date")))
+                elif key == "feeder":
+                    row.append(feeder.get("name") or feeder_id or "")
+                elif key == "maxTime":
+                    row.append(format_time(max_data.get("time")))
+                elif key == "maxAmps":
+                    row.append(max_data.get("amps") or "")
+                elif key == "maxMw":
+                    row.append(max_data.get("mw") or "")
+                elif key == "maxMvar":
+                    row.append(max_data.get("mvar") or "")
+                elif key == "minAmps":
+                    row.append(min_data.get("amps") or "")
+                elif key == "minMw":
+                    row.append(min_data.get("mw") or "")
+                elif key == "minMvar":
+                    row.append(min_data.get("mvar") or "")
+                elif key == "minDate":
+                    row.append(format_date(e.get("date")))
+                elif key == "minTime":
+                    row.append(format_time(min_data.get("time")))
+                elif key == "avgAmps":
+                    row.append(avg_data.get("amps") or "")
+                elif key == "avgMw":
+                    row.append(avg_data.get("mw") or "")
+            ws.append(row)
+
+        for col_idx in range(1, ws.max_column + 1):
+            col_letter = get_column_letter(col_idx)
+            max_length = 0
+            for cell in ws[col_letter]:
+                try:
+                    cell_val = str(cell.value) if cell.value is not None else ""
+                    if len(cell_val) > max_length:
+                        max_length = len(cell_val)
+                except Exception:
+                    continue
+            ws.column_dimensions[col_letter].width = max_length + 2
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        filename_parts = ["Admin_MaxMin_Analytics"]
+        if start_date:
+            filename_parts.append(start_date)
+        if end_date:
+            filename_parts.append(end_date)
+        filename = "_".join(filename_parts) + ".xlsx"
+
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+    except Exception as e:
+        import traceback
+        error_msg = traceback.format_exc()
+        print(error_msg)
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+
+@api_router.post("/admin/analytics/max-min/export-view")
+async def export_admin_max_min_view(
+    payload: AdminMaxMinExportViewPayload,
+    current_admin: User = Depends(get_current_admin),
+):
+    try:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Max-Min Analytics View"
+
+        header_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF")
+        header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        headers = [col.label for col in payload.columns]
+        fields = [col.field for col in payload.columns]
+
+        ws.append(headers)
+        for cell in ws[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = header_align
+
+        for row_data in payload.rows:
+            excel_row: list[Any] = []
+            for field in fields:
+                value = row_data.get(field, "")
+                excel_row.append(value if value is not None else "")
+            ws.append(excel_row)
+
+        for col_idx in range(1, ws.max_column + 1):
+            col_letter = get_column_letter(col_idx)
+            max_length = 0
+            for cell in ws[col_letter]:
+                try:
+                    cell_val = str(cell.value) if cell.value is not None else ""
+                    if len(cell_val) > max_length:
+                        max_length = len(cell_val)
+                except Exception:
+                    continue
+            ws.column_dimensions[col_letter].width = max_length + 2
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        filename = "Admin_MaxMin_Analytics_View.xlsx"
+        meta = payload.meta or {}
+        start_date = meta.get("startDate") or meta.get("start_date")
+        end_date = meta.get("endDate") or meta.get("end_date")
+        if start_date or end_date:
+            parts = ["Admin_MaxMin_Analytics"]
+            if start_date:
+                parts.append(str(start_date))
+            if end_date:
+                parts.append(str(end_date))
+            filename = "_".join(parts) + ".xlsx"
+
+        return StreamingResponse(
+            output,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+    except Exception as e:
+        import traceback
+        error_msg = traceback.format_exc()
+        print(error_msg)
+        return JSONResponse(status_code=500, content={"detail": str(e)})
+
+@api_router.get("/admin/analytics/station-load")
+async def admin_station_load_analytics(
+    feeder_ids: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    mode: str = "day",
+    current_admin: User = Depends(get_current_admin),
+):
+    mode_normalized = (mode or "day").lower()
+    if mode_normalized not in {"day", "month"}:
+        raise HTTPException(status_code=400, detail="mode must be 'day' or 'month'")
+    ict_feeders = await db.max_min_feeders.find({"type": "ict_feeder"}, {"_id": 0}).to_list(1000)
+    feeder_map: dict[str, dict[str, Any]] = {f["id"]: f for f in ict_feeders if f.get("id")}
+    if feeder_ids:
+        selected_ids = [f for f in feeder_ids.split(",") if f]
+        selected_ids = [fid for fid in selected_ids if fid in feeder_map]
+    else:
+        selected_ids = list(feeder_map.keys())
+    if not selected_ids:
+        return {"mode": mode_normalized, "feeders": ict_feeders, "rows": []}
+    query: dict[str, Any] = {"feeder_id": {"$in": selected_ids}}
+    if start_date and end_date:
+        query["date"] = {"$gte": start_date, "$lte": end_date}
+    elif start_date:
+        query["date"] = {"$gte": start_date}
+    elif end_date:
+        query["date"] = {"$lte": end_date}
+    projection = {"_id": 0, "feeder_id": 1, "date": 1, "data": 1}
+    raw_entries = await db.max_min_entries.find(query, projection).sort("date", 1).to_list(20000)
+
+    def to_float(value: Any) -> float | None:
+        if value is None:
+            return None
+        s = str(value).strip()
+        if not s:
+            return None
+        try:
+            return float(s)
+        except Exception:
+            return None
+
+    rows_map: dict[str, dict[str, Any]] = {}
+    if mode_normalized == "day":
+        for e in raw_entries:
+            date_str = e.get("date")
+            feeder_id = e.get("feeder_id")
+            if not date_str or feeder_id not in feeder_map:
+                continue
+            data = e.get("data") or {}
+            max_data = data.get("max") or {}
+            amps = to_float(max_data.get("amps"))
+            mw = to_float(max_data.get("mw"))
+            mvar = to_float(max_data.get("mvar"))
+            time_str = max_data.get("time")
+            key = date_str
+            if key not in rows_map:
+                rows_map[key] = {"period": key, "per_ict": {}, "station_mw": 0.0, "station_mvar": 0.0}
+            per_ict = rows_map[key]["per_ict"]
+            per_ict[feeder_id] = {
+                "feeder_id": feeder_id,
+                "feeder_name": feeder_map[feeder_id].get("name"),
+                "date": date_str,
+                "time": time_str,
+                "amps": amps,
+                "mw": mw,
+                "mvar": mvar,
+            }
+            if mw is not None:
+                rows_map[key]["station_mw"] += mw
+            if mvar is not None:
+                rows_map[key]["station_mvar"] += mvar
+    else:
+        for e in raw_entries:
+            date_str = e.get("date")
+            feeder_id = e.get("feeder_id")
+            if not date_str or feeder_id not in feeder_map:
+                continue
+            data = e.get("data") or {}
+            max_data = data.get("max") or {}
+            amps = to_float(max_data.get("amps"))
+            mw = to_float(max_data.get("mw"))
+            mvar = to_float(max_data.get("mvar"))
+            time_str = max_data.get("time")
+            if not mw and not mvar and not amps:
+                continue
+            month_key = date_str[:7]
+            if month_key not in rows_map:
+                rows_map[month_key] = {"period": month_key, "per_ict": {}}
+            per_ict = rows_map[month_key]["per_ict"]
+            existing = per_ict.get(feeder_id)
+            replace = False
+            mw_val = mw if mw is not None else 0.0
+            if existing is None:
+                replace = True
+            else:
+                existing_mw = existing.get("mw")
+                existing_mw_val = existing_mw if isinstance(existing_mw, (int, float)) else 0.0
+                if mw_val > existing_mw_val:
+                    replace = True
+            if replace:
+                per_ict[feeder_id] = {
+                    "feeder_id": feeder_id,
+                    "feeder_name": feeder_map[feeder_id].get("name"),
+                    "date": date_str,
+                    "time": time_str,
+                    "amps": amps,
+                    "mw": mw,
+                    "mvar": mvar,
+                }
+    rows: list[dict[str, Any]] = []
+    for key in sorted(rows_map.keys()):
+        row = rows_map[key]
+        per_ict = row.get("per_ict") or {}
+        if mode_normalized == "day":
+            station_mw = row.get("station_mw", 0.0)
+            station_mvar = row.get("station_mvar", 0.0)
+        else:
+            station_mw = 0.0
+            station_mvar = 0.0
+            for v in per_ict.values():
+                mw = v.get("mw")
+                mvar = v.get("mvar")
+                if isinstance(mw, (int, float)):
+                    station_mw += mw
+                if isinstance(mvar, (int, float)):
+                    station_mvar += mvar
+        station_mva = (station_mw ** 2 + station_mvar ** 2) ** 0.5 if station_mw or station_mvar else None
+        ict_values: dict[str, Any] = {}
+        for fid, v in per_ict.items():
+            mw = v.get("mw")
+            mvar = v.get("mvar")
+            if isinstance(mw, (int, float)) or isinstance(mvar, (int, float)):
+                ict_mva = None
+                if isinstance(mw, (int, float)) and isinstance(mvar, (int, float)):
+                    ict_mva = (mw ** 2 + mvar ** 2) ** 0.5
+            else:
+                ict_mva = None
+            ict_values[fid] = {**v, "mva": ict_mva}
+        rows.append(
+            {
+                "period": row["period"],
+                "per_ict": ict_values,
+                "station": {"mw": station_mw, "mvar": station_mvar, "mva": station_mva},
+            }
+        )
+    return {"mode": mode_normalized, "feeders": [feeder_map[fid] for fid in selected_ids], "rows": rows}
+
+
+@api_router.get("/admin/analytics/station-load/export")
+async def admin_station_load_export(
+    feeder_ids: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    mode: str = "day",
+    metrics: Optional[str] = None,
+    include_station: bool = True,
+    current_admin: User = Depends(get_current_admin),
+):
+    mode_normalized = (mode or "day").lower()
+    if mode_normalized not in {"day", "month"}:
+        raise HTTPException(status_code=400, detail="mode must be 'day' or 'month'")
+    ict_feeders = await db.max_min_feeders.find({"type": "ict_feeder"}, {"_id": 0}).to_list(1000)
+    feeder_map: dict[str, dict[str, Any]] = {f["id"]: f for f in ict_feeders if f.get("id")}
+    if feeder_ids:
+        selected_ids = [f for f in feeder_ids.split(",") if f]
+        selected_ids = [fid for fid in selected_ids if fid in feeder_map]
+    else:
+        selected_ids = list(feeder_map.keys())
+    if not selected_ids:
+        raise HTTPException(status_code=400, detail="No valid ICT feeders selected")
+    query: dict[str, Any] = {"feeder_id": {"$in": selected_ids}}
+    if start_date and end_date:
+        query["date"] = {"$gte": start_date, "$lte": end_date}
+    elif start_date:
+        query["date"] = {"$gte": start_date}
+    elif end_date:
+        query["date"] = {"$lte": end_date}
+    projection = {"_id": 0, "feeder_id": 1, "date": 1, "data": 1}
+    raw_entries = await db.max_min_entries.find(query, projection).sort("date", 1).to_list(20000)
+
+    def to_float(value: Any) -> float | None:
+        if value is None:
+            return None
+        s = str(value).strip()
+        if not s:
+            return None
+        try:
+            return float(s)
+        except Exception:
+            return None
+
+    rows_map: dict[str, dict[str, Any]] = {}
+    if mode_normalized == "day":
+        for e in raw_entries:
+            date_str = e.get("date")
+            feeder_id = e.get("feeder_id")
+            if not date_str or feeder_id not in feeder_map:
+                continue
+            data = e.get("data") or {}
+            max_data = data.get("max") or {}
+            amps = to_float(max_data.get("amps"))
+            mw = to_float(max_data.get("mw"))
+            mvar = to_float(max_data.get("mvar"))
+            time_str = max_data.get("time")
+            key = date_str
+            if key not in rows_map:
+                rows_map[key] = {"period": key, "per_ict": {}, "station_mw": 0.0, "station_mvar": 0.0}
+            per_ict = rows_map[key]["per_ict"]
+            per_ict[feeder_id] = {
+                "feeder_id": feeder_id,
+                "feeder_name": feeder_map[feeder_id].get("name"),
+                "date": date_str,
+                "time": time_str,
+                "amps": amps,
+                "mw": mw,
+                "mvar": mvar,
+            }
+            if mw is not None:
+                rows_map[key]["station_mw"] += mw
+            if mvar is not None:
+                rows_map[key]["station_mvar"] += mvar
+    else:
+        for e in raw_entries:
+            date_str = e.get("date")
+            feeder_id = e.get("feeder_id")
+            if not date_str or feeder_id not in feeder_map:
+                continue
+            data = e.get("data") or {}
+            max_data = data.get("max") or {}
+            amps = to_float(max_data.get("amps"))
+            mw = to_float(max_data.get("mw"))
+            mvar = to_float(max_data.get("mvar"))
+            time_str = max_data.get("time")
+            if not mw and not mvar and not amps:
+                continue
+            month_key = date_str[:7]
+            if month_key not in rows_map:
+                rows_map[month_key] = {"period": month_key, "per_ict": {}}
+            per_ict = rows_map[month_key]["per_ict"]
+            existing = per_ict.get(feeder_id)
+            replace = False
+            mw_val = mw if mw is not None else 0.0
+            if existing is None:
+                replace = True
+            else:
+                existing_mw = existing.get("mw")
+                existing_mw_val = existing_mw if isinstance(existing_mw, (int, float)) else 0.0
+                if mw_val > existing_mw_val:
+                    replace = True
+            if replace:
+                per_ict[feeder_id] = {
+                    "feeder_id": feeder_id,
+                    "feeder_name": feeder_map[feeder_id].get("name"),
+                    "date": date_str,
+                    "time": time_str,
+                    "amps": amps,
+                    "mw": mw,
+                    "mvar": mvar,
+                }
+
+    metric_order = ["amps", "mw", "mvar", "mva"]
+    station_order = ["mva", "mw", "mvar"]
+    if metrics:
+        requested = [m.strip().lower() for m in metrics.split(",") if m.strip()]
+        active_metric_keys = [m for m in metric_order if m in requested]
+    else:
+        active_metric_keys = metric_order.copy()
+    if not active_metric_keys:
+        raise HTTPException(status_code=400, detail="At least one metric must be selected")
+    if include_station:
+        station_metric_keys = [m for m in station_order if m in active_metric_keys]
+    else:
+        station_metric_keys = []
+
+    # Sort ICTs by name to match frontend table order
+    sorted_ids = sorted(
+        selected_ids,
+        key=lambda fid: (feeder_map[fid].get("name") or "").lower(),
+    )
+
+    wb = Workbook()
+    if "Sheet" in wb.sheetnames:
+        del wb["Sheet"]
+    ws = wb.create_sheet("Station Load")
+
+    header_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    metric_label_map = {"amps": "Amps", "mw": "MW", "mvar": "MVAR", "mva": "MVA"}
+
+    # Header row 1 and 2 to mirror on-screen table:
+    # Row 1: Date, Time, ICT group headers, Station Load group header
+    # Row 2: sub-headers Amps/MW/MVAR/MVA under each group
+
+    # Date / Time with vertical merge (row span 2)
+    ws.merge_cells(start_row=1, start_column=1, end_row=2, end_column=1)
+    c_date = ws.cell(row=1, column=1, value="Date")
+    c_date.fill = header_fill
+    c_date.font = header_font
+    c_date.alignment = header_align
+
+    ws.merge_cells(start_row=1, start_column=2, end_row=2, end_column=2)
+    c_time = ws.cell(row=1, column=2, value="Time")
+    c_time.fill = header_fill
+    c_time.font = header_font
+    c_time.alignment = header_align
+
+    col_idx = 3
+
+    # ICT group headers and sub-headers
+    for fid in sorted_ids:
+        feeder = feeder_map[fid]
+        name = feeder.get("name", fid)
+        span = len(active_metric_keys) or 1
+        if span > 1:
+            ws.merge_cells(
+                start_row=1,
+                start_column=col_idx,
+                end_row=1,
+                end_column=col_idx + span - 1,
+            )
+        gcell = ws.cell(row=1, column=col_idx, value=name)
+        gcell.fill = header_fill
+        gcell.font = header_font
+        gcell.alignment = header_align
+
+        for m in active_metric_keys:
+            subcell = ws.cell(row=2, column=col_idx, value=metric_label_map[m])
+            subcell.fill = header_fill
+            subcell.font = header_font
+            subcell.alignment = header_align
+            col_idx += 1
+
+    # Station Load group headers and sub-headers (if included)
+    if station_metric_keys:
+        span = len(station_metric_keys)
+        if span > 1:
+            ws.merge_cells(
+                start_row=1,
+                start_column=col_idx,
+                end_row=1,
+                end_column=col_idx + span - 1,
+            )
+        scell = ws.cell(row=1, column=col_idx, value="Station Load")
+        scell.fill = header_fill
+        scell.font = header_font
+        scell.alignment = header_align
+
+        for m in station_metric_keys:
+            subcell = ws.cell(row=2, column=col_idx, value=metric_label_map[m])
+            subcell.fill = header_fill
+            subcell.font = header_font
+            subcell.alignment = header_align
+            col_idx += 1
+
+    def format_int(value: Any) -> Any:
+        if not isinstance(value, (int, float)):
+            return None
+        return int(round(value))
+
+    def format_dec(value: Any) -> Any:
+        if not isinstance(value, (int, float)):
+            return None
+        return round(float(value), 2)
+
+    for key in sorted(rows_map.keys()):
+        row_info = rows_map[key]
+        per_ict = row_info.get("per_ict") or {}
+        if mode_normalized == "day":
+            station_mw = row_info.get("station_mw", 0.0)
+            station_mvar = row_info.get("station_mvar", 0.0)
+        else:
+            station_mw = 0.0
+            station_mvar = 0.0
+            for v in per_ict.values():
+                mw_val = v.get("mw")
+                mvar_val = v.get("mvar")
+                if isinstance(mw_val, (int, float)):
+                    station_mw += mw_val
+                if isinstance(mvar_val, (int, float)):
+                    station_mvar += mvar_val
+        station_mva = (station_mw ** 2 + station_mvar ** 2) ** 0.5 if station_mw or station_mvar else None
+
+        ict_values: dict[str, Any] = {}
+        for fid, v in per_ict.items():
+            mw_val = v.get("mw")
+            mvar_val = v.get("mvar")
+            if isinstance(mw_val, (int, float)) and isinstance(mvar_val, (int, float)):
+                ict_mva = (mw_val ** 2 + mvar_val ** 2) ** 0.5
+            else:
+                ict_mva = None
+            ict_values[fid] = {**v, "mva": ict_mva}
+
+        best_date = None
+        best_time = None
+        best_mw_val = None
+        for v in ict_values.values():
+            mw_val = v.get("mw")
+            if isinstance(mw_val, (int, float)):
+                if best_mw_val is None or mw_val > best_mw_val:
+                    best_mw_val = mw_val
+                    best_date = v.get("date")
+                    best_time = v.get("time")
+        if best_date:
+            date_str = format_date(best_date)
+        else:
+            date_str = row_info.get("period") or ""
+        time_str = best_time or ""
+
+        excel_row: list[Any] = [date_str, time_str]
+        for fid in sorted_ids:
+            v = ict_values.get(fid) or {}
+            for m in active_metric_keys:
+                if m == "amps":
+                    excel_row.append(format_int(v.get("amps")))
+                elif m == "mw":
+                    excel_row.append(format_int(v.get("mw")))
+                elif m == "mvar":
+                    excel_row.append(format_dec(v.get("mvar")))
+                else:
+                    excel_row.append(format_dec(v.get("mva")))
+        for m in station_metric_keys:
+            if m == "mva":
+                excel_row.append(format_dec(station_mva))
+            elif m == "mw":
+                excel_row.append(format_int(station_mw))
+            else:
+                excel_row.append(format_dec(station_mvar))
+        ws.append(excel_row)
+
+    for col_idx in range(1, ws.max_column + 1):
+        col_letter = get_column_letter(col_idx)
+        max_length = 0
+        for cell in ws[col_letter]:
+            try:
+                cell_val = str(cell.value) if cell.value is not None else ""
+                max_length = max(max_length, len(cell_val))
+            except Exception:
+                continue
+        ws.column_dimensions[col_letter].width = max_length + 2
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    filename_parts = ["StationLoad", mode_normalized]
+    if start_date:
+        filename_parts.append(start_date)
+    if end_date:
+        filename_parts.append(end_date)
+    filename = "_".join(filename_parts) + ".xlsx"
+
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@api_router.get("/admin/analytics/interruptions")
+async def admin_interruptions_analytics(
+    feeder_ids: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    current_admin: User = Depends(get_current_admin),
+):
+    query: dict[str, Any] = {}
+    if feeder_ids:
+        ids = [f for f in feeder_ids.split(",") if f]
+        if ids:
+            query["feeder_id"] = {"$in": ids}
+    if start_date and end_date:
+        query["date"] = {"$gte": start_date, "$lte": end_date}
+    elif start_date:
+        query["date"] = {"$gte": start_date}
+    elif end_date:
+        query["date"] = {"$lte": end_date}
+    entries = await db.interruption_entries.find(query, {"_id": 0}).sort("date", 1).to_list(10000)
+    feeders = await db.max_min_feeders.find({}, {"_id": 0}).to_list(1000)
+    return {"entries": entries, "feeders": feeders}
+
+
+@api_router.post("/admin/bulk-import/energy")
+async def admin_bulk_import_energy(
+    payload: dict,
+    current_admin: User = Depends(get_current_admin),
+):
+    sheet_id = payload.get("sheet_id")
+    entries = payload.get("entries") or []
+    overwrite = bool(payload.get("overwrite"))
+    year = payload.get("year")
+    month = payload.get("month")
+    if not sheet_id or not isinstance(entries, list):
+        raise HTTPException(status_code=400, detail="sheet_id and entries are required")
+    total_entries = len(entries)
+    inserted = 0
+    skipped_existing = 0
+    validation_errors = 0
+    per_month: dict[str, dict[str, int]] = {}
+    errors: list[dict[str, Any]] = []
+    meters = await db.energy_meters.find({"sheet_id": sheet_id}, {"_id": 0}).to_list(100)
+    meter_map = {m["id"]: m for m in meters}
+    for idx, e in enumerate(sorted(entries, key=lambda x: x.get("date") or "")):
+        date_str = e.get("date")
+        if not date_str:
+            validation_errors += 1
+            errors.append({"index": idx, "reason": "Missing date", "date": None, "sheet_id": sheet_id})
+            continue
+        month_key = date_str[:7]
+        if month_key not in per_month:
+            per_month[month_key] = {"inserted": 0, "skipped_existing": 0, "validation_errors": 0}
+        try:
+            existing = await db.energy_entries.find_one({"sheet_id": sheet_id, "date": date_str})
+            if existing and not overwrite:
+                skipped_existing += 1
+                per_month[month_key]["skipped_existing"] += 1
+                continue
+            date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+            prev_date = (date_obj - timedelta(days=1)).strftime("%Y-%m-%d")
+            prev_entry = await db.energy_entries.find_one({"sheet_id": sheet_id, "date": prev_date}, {"_id": 0})
+            prev_finals: dict[str, float] = {}
+            if prev_entry:
+                for r in prev_entry.get("readings", []):
+                    prev_finals[r["meter_id"]] = r["final"]
+            readings = []
+            total_consumption = 0.0
+            for r in e.get("readings", []):
+                meter = meter_map.get(r.get("meter_id"))
+                if not meter:
+                    continue
+                initial = prev_finals.get(r["meter_id"], 0.0)
+                final = float(r.get("final", 0.0))
+                consumption = (final - initial) * meter["mf"]
+                readings.append(
+                    {
+                        "meter_id": r["meter_id"],
+                        "initial": initial,
+                        "final": final,
+                        "consumption": consumption,
+                    }
+                )
+                total_consumption += consumption
+            entry_doc = EnergyEntry(
+                sheet_id=sheet_id,
+                date=date_str,
+                readings=[EnergyReading(**rr) for rr in readings],
+                total_consumption=total_consumption,
+            ).model_dump()
+            if isinstance(entry_doc.get("created_at"), datetime):
+                entry_doc["created_at"] = entry_doc["created_at"].isoformat()
+            if isinstance(entry_doc.get("updated_at"), datetime):
+                entry_doc["updated_at"] = entry_doc["updated_at"].isoformat()
+            if existing and overwrite:
+                await db.energy_entries.replace_one({"_id": existing["_id"]}, entry_doc)
+            else:
+                await db.energy_entries.insert_one(entry_doc)
+            inserted += 1
+            per_month[month_key]["inserted"] += 1
+        except Exception as exc:
+            validation_errors += 1
+            per_month[month_key]["validation_errors"] += 1
+            errors.append(
+                {"index": idx, "reason": str(exc), "date": date_str, "sheet_id": sheet_id}
+            )
+    per_month_rows = []
+    for key, stats in sorted(per_month.items()):
+        per_month_rows.append(
+            {
+                "month": key,
+                "inserted": stats["inserted"],
+                "skipped_existing": stats["skipped_existing"],
+                "validation_errors": stats["validation_errors"],
+            }
+        )
+    return {
+        "module": "Energy",
+        "year": year,
+        "month": month,
+        "overwrite": overwrite,
+        "total_entries": total_entries,
+        "inserted": inserted,
+        "skipped_existing": skipped_existing,
+        "validation_errors": validation_errors,
+        "per_month": per_month_rows,
+        "errors": errors,
+    }
+
+
+@api_router.post("/admin/bulk-import/check/energy")
+async def admin_bulk_import_check_energy(
+    payload: dict,
+    current_admin: User = Depends(get_current_admin),
+):
+    sheet_id = payload.get("sheet_id")
+    year = payload.get("year")
+    month = payload.get("month")
+    if not sheet_id:
+        raise HTTPException(status_code=400, detail="sheet_id is required")
+    query: dict[str, Any] = {"sheet_id": sheet_id}
+    if isinstance(year, int):
+        y = year
+        if isinstance(month, int):
+            start_date = f"{y:04d}-{month:02d}-01"
+            end_date = f"{y:04d}-{month:02d}-31"
+        else:
+            start_date = f"{y:04d}-01-01"
+            end_date = f"{y:04d}-12-31"
+        query["date"] = {"$gte": start_date, "$lte": end_date}
+    count = await db.energy_entries.count_documents(query)
+    return {
+        "module": "Energy",
+        "sheet_id": sheet_id,
+        "year": year,
+        "month": month,
+        "has_existing": count > 0,
+        "total_existing": int(count),
+    }
+
+
+@api_router.post("/admin/bulk-import/line-losses")
+async def admin_bulk_import_line_losses(
+    payload: dict,
+    current_admin: User = Depends(get_current_admin),
+):
+    feeder_id = payload.get("feeder_id")
+    entries = payload.get("entries") or []
+    overwrite = bool(payload.get("overwrite"))
+    year = payload.get("year")
+    month = payload.get("month")
+    if not feeder_id or not isinstance(entries, list):
+        raise HTTPException(status_code=400, detail="feeder_id and entries are required")
+    feeder = await db.feeders.find_one({"id": feeder_id}, {"_id": 0})
+    if not feeder:
+        raise HTTPException(status_code=404, detail="Feeder not found")
+    total_entries = len(entries)
+    inserted = 0
+    skipped_existing = 0
+    validation_errors = 0
+    per_month: dict[str, dict[str, int]] = {}
+    errors: list[dict[str, Any]] = []
+    for idx, e in enumerate(sorted(entries, key=lambda x: x.get("date") or "")):
+        date_str = e.get("date")
+        if not date_str:
+            validation_errors += 1
+            errors.append({"index": idx, "reason": "Missing date", "date": None, "feeder_id": feeder_id})
+            continue
+        month_key = date_str[:7]
+        if month_key not in per_month:
+            per_month[month_key] = {"inserted": 0, "skipped_existing": 0, "validation_errors": 0}
+        try:
+            existing = await db.entries.find_one({"feeder_id": feeder_id, "date": date_str})
+            if existing and not overwrite:
+                skipped_existing += 1
+                per_month[month_key]["skipped_existing"] += 1
+                continue
+            date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+            prev_date = (date_obj - timedelta(days=1)).strftime("%Y-%m-%d")
+            prev_entry = await db.entries.find_one({"feeder_id": feeder_id, "date": prev_date}, {"_id": 0})
+            end1_import_initial = prev_entry["end1_import_final"] if prev_entry else 0
+            end1_export_initial = prev_entry["end1_export_final"] if prev_entry else 0
+            end2_import_initial = prev_entry["end2_import_final"] if prev_entry else 0
+            end2_export_initial = prev_entry["end2_export_final"] if prev_entry else 0
+            end1_import_final = float(e.get("end1_import_final", 0) or 0)
+            end1_export_final = float(e.get("end1_export_final", 0) or 0)
+            end2_import_final = float(e.get("end2_import_final", 0) or 0)
+            end2_export_final = float(e.get("end2_export_final", 0) or 0)
+            end1_import_consumption = (
+                end1_import_final - end1_import_initial
+            ) * feeder["end1_import_mf"]
+            end1_export_consumption = (
+                end1_export_final - end1_export_initial
+            ) * feeder["end1_export_mf"]
+            end2_import_consumption = (
+                end2_import_final - end2_import_initial
+            ) * feeder["end2_import_mf"]
+            end2_export_consumption = (
+                end2_export_final - end2_export_initial
+            ) * feeder["end2_export_mf"]
+            total_import = end1_import_consumption + end2_import_consumption
+            loss_percent = (
+                0
+                if total_import == 0
+                else (
+                    end1_import_consumption
+                    - end1_export_consumption
+                    + end2_import_consumption
+                    - end2_export_consumption
+                )
+                / total_import
+                * 100
+            )
+            entry_obj = DailyEntry(
+                feeder_id=feeder_id,
+                date=date_str,
+                end1_import_initial=end1_import_initial,
+                end1_import_final=end1_import_final,
+                end1_export_initial=end1_export_initial,
+                end1_export_final=end1_export_final,
+                end2_import_initial=end2_import_initial,
+                end2_import_final=end2_import_final,
+                end2_export_initial=end2_export_initial,
+                end2_export_final=end2_export_final,
+                end1_import_consumption=end1_import_consumption,
+                end1_export_consumption=end1_export_consumption,
+                end2_import_consumption=end2_import_consumption,
+                end2_export_consumption=end2_export_consumption,
+                loss_percent=loss_percent,
+            ).model_dump()
+            created_at = entry_obj.get("created_at")
+            updated_at = entry_obj.get("updated_at")
+            if isinstance(created_at, datetime):
+                entry_obj["created_at"] = created_at.isoformat()
+            if isinstance(updated_at, datetime):
+                entry_obj["updated_at"] = updated_at.isoformat()
+            if existing and overwrite:
+                await db.entries.replace_one({"_id": existing["_id"]}, entry_obj)
+            else:
+                await db.entries.insert_one(entry_obj)
+            inserted += 1
+            per_month[month_key]["inserted"] += 1
+        except Exception as exc:
+            validation_errors += 1
+            per_month[month_key]["validation_errors"] += 1
+            errors.append(
+                {"index": idx, "reason": str(exc), "date": date_str, "feeder_id": feeder_id}
+            )
+    per_month_rows = []
+    for key, stats in sorted(per_month.items()):
+        per_month_rows.append(
+            {
+                "month": key,
+                "inserted": stats["inserted"],
+                "skipped_existing": stats["skipped_existing"],
+                "validation_errors": stats["validation_errors"],
+            }
+        )
+    return {
+        "module": "Line Losses",
+        "year": year,
+        "month": month,
+        "overwrite": overwrite,
+        "total_entries": total_entries,
+        "inserted": inserted,
+        "skipped_existing": skipped_existing,
+        "validation_errors": validation_errors,
+        "per_month": per_month_rows,
+        "errors": errors,
+    }
+
+
+@api_router.post("/admin/bulk-import/check/line-losses")
+async def admin_bulk_import_check_line_losses(
+    payload: dict,
+    current_admin: User = Depends(get_current_admin),
+):
+    feeder_id = payload.get("feeder_id")
+    year = payload.get("year")
+    month = payload.get("month")
+    if not feeder_id:
+        raise HTTPException(status_code=400, detail="feeder_id is required")
+    query: dict[str, Any] = {"feeder_id": feeder_id}
+    if isinstance(year, int):
+        y = year
+        if isinstance(month, int):
+            start_date = f"{y:04d}-{month:02d}-01"
+            end_date = f"{y:04d}-{month:02d}-31"
+        else:
+            start_date = f"{y:04d}-01-01"
+            end_date = f"{y:04d}-12-31"
+        query["date"] = {"$gte": start_date, "$lte": end_date}
+    count = await db.entries.count_documents(query)
+    return {
+        "module": "Line Losses",
+        "feeder_id": feeder_id,
+        "year": year,
+        "month": month,
+        "has_existing": count > 0,
+        "total_existing": int(count),
+    }
+
+
+@api_router.post("/admin/bulk-import/max-min")
+async def admin_bulk_import_max_min(
+    payload: dict,
+    current_admin: User = Depends(get_current_admin),
+):
+    feeder_id = payload.get("feeder_id")
+    entries = payload.get("entries") or []
+    overwrite = bool(payload.get("overwrite"))
+    year = payload.get("year")
+    month = payload.get("month")
+    if not feeder_id or not isinstance(entries, list):
+        raise HTTPException(status_code=400, detail="feeder_id and entries are required")
+    feeder = await db.max_min_feeders.find_one({"id": feeder_id}, {"_id": 0})
+    if not feeder:
+        raise HTTPException(status_code=404, detail="Feeder not found")
+    total_entries = len(entries)
+    inserted = 0
+    skipped_existing = 0
+    validation_errors = 0
+    per_month: dict[str, dict[str, int]] = {}
+    errors: list[dict[str, Any]] = []
+    for idx, e in enumerate(sorted(entries, key=lambda x: x.get("date") or "")):
+        date_str = e.get("date")
+        if not date_str:
+            validation_errors += 1
+            errors.append({"index": idx, "reason": "Missing date", "date": None, "feeder_id": feeder_id})
+            continue
+        month_key = date_str[:7]
+        if month_key not in per_month:
+            per_month[month_key] = {"inserted": 0, "skipped_existing": 0, "validation_errors": 0}
+        data = e.get("data") or {}
+        try:
+            existing = await db.max_min_entries.find_one({"feeder_id": feeder_id, "date": date_str})
+            if existing and not overwrite:
+                skipped_existing += 1
+                per_month[month_key]["skipped_existing"] += 1
+                continue
+            if existing and overwrite:
+                await db.max_min_entries.update_one(
+                    {"_id": existing["_id"]},
+                    {
+                        "$set": {
+                            "data": data,
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    },
+                )
+            else:
+                entry_obj = MaxMinEntry(feeder_id=feeder_id, date=date_str, data=data)
+                doc = entry_obj.model_dump()
+                if isinstance(doc.get("created_at"), datetime):
+                    doc["created_at"] = doc["created_at"].isoformat()
+                if isinstance(doc.get("updated_at"), datetime):
+                    doc["updated_at"] = doc["updated_at"].isoformat()
+                await db.max_min_entries.insert_one(doc)
+            inserted += 1
+            per_month[month_key]["inserted"] += 1
+        except Exception as exc:
+            validation_errors += 1
+            per_month[month_key]["validation_errors"] += 1
+            errors.append(
+                {"index": idx, "reason": str(exc), "date": date_str, "feeder_id": feeder_id}
+            )
+    per_month_rows = []
+    for key, stats in sorted(per_month.items()):
+        per_month_rows.append(
+            {
+                "month": key,
+                "inserted": stats["inserted"],
+                "skipped_existing": stats["skipped_existing"],
+                "validation_errors": stats["validation_errors"],
+            }
+        )
+    return {
+        "module": "Max-Min",
+        "year": year,
+        "month": month,
+        "overwrite": overwrite,
+        "total_entries": total_entries,
+        "inserted": inserted,
+        "skipped_existing": skipped_existing,
+        "validation_errors": validation_errors,
+        "per_month": per_month_rows,
+        "errors": errors,
+    }
+
+
+@api_router.post("/admin/bulk-import/check/max-min")
+async def admin_bulk_import_check_max_min(
+    payload: dict,
+    current_admin: User = Depends(get_current_admin),
+):
+    feeder_id = payload.get("feeder_id")
+    year = payload.get("year")
+    month = payload.get("month")
+    if not feeder_id:
+        raise HTTPException(status_code=400, detail="feeder_id is required")
+    query: dict[str, Any] = {"feeder_id": feeder_id}
+    if isinstance(year, int):
+        y = year
+        if isinstance(month, int):
+            start_date = f"{y:04d}-{month:02d}-01"
+            end_date = f"{y:04d}-{month:02d}-31"
+        else:
+            start_date = f"{y:04d}-01-01"
+            end_date = f"{y:04d}-12-31"
+        query["date"] = {"$gte": start_date, "$lte": end_date}
+    count = await db.max_min_entries.count_documents(query)
+    return {
+        "module": "Max-Min",
+        "feeder_id": feeder_id,
+        "year": year,
+        "month": month,
+        "has_existing": count > 0,
+        "total_existing": int(count),
+    }
+
+
+@api_router.post("/admin/bulk-import/interruptions")
+async def admin_bulk_import_interruptions(
+    payload: dict,
+    current_admin: User = Depends(get_current_admin),
+):
+    entries = payload.get("entries") or []
+    overwrite = bool(payload.get("overwrite"))
+    year = payload.get("year")
+    month = payload.get("month")
+    if not isinstance(entries, list):
+        raise HTTPException(status_code=400, detail="entries are required")
+    total_entries = len(entries)
+    inserted = 0
+    skipped_existing = 0
+    validation_errors = 0
+    per_month: dict[str, dict[str, int]] = {}
+    errors: list[dict[str, Any]] = []
+    for idx, e in enumerate(
+        sorted(entries, key=lambda x: (x.get("feeder_id") or "", x.get("date") or "", x.get("start_time") or ""))
+    ):
+        feeder_id = e.get("feeder_id")
+        date_str = e.get("date")
+        start_time = e.get("start_time")
+        if not feeder_id or not date_str or not start_time:
+            validation_errors += 1
+            errors.append(
+                {
+                    "index": idx,
+                    "reason": "Missing feeder_id, date, or start_time",
+                    "date": date_str,
+                    "feeder_id": feeder_id,
+                }
+            )
+            continue
+        month_key = date_str[:7]
+        if month_key not in per_month:
+            per_month[month_key] = {"inserted": 0, "skipped_existing": 0, "validation_errors": 0}
+        try:
+            feeder = await db.max_min_feeders.find_one({"id": feeder_id}, {"_id": 0})
+            if not feeder:
+                validation_errors += 1
+                per_month[month_key]["validation_errors"] += 1
+                errors.append(
+                    {"index": idx, "reason": "Feeder not found", "date": date_str, "feeder_id": feeder_id}
+                )
+                continue
+            if feeder.get("type") not in [
+                "feeder_400kv",
+                "feeder_220kv",
+                "ict_feeder",
+                "reactor_feeder",
+                "bay_feeder",
+            ]:
+                validation_errors += 1
+                per_month[month_key]["validation_errors"] += 1
+                errors.append(
+                    {
+                        "index": idx,
+                        "reason": "Interruptions not supported for feeder type",
+                        "date": date_str,
+                        "feeder_id": feeder_id,
+                    }
+                )
+                continue
+            existing = await db.interruption_entries.find_one(
+                {"feeder_id": feeder_id, "date": date_str, "data.start_time": start_time},
+                {"_id": 0},
+            )
+            if existing and not overwrite:
+                skipped_existing += 1
+                per_month[month_key]["skipped_existing"] += 1
+                continue
+            data = {
+                "start_time": start_time,
+                "end_time": e.get("end_time"),
+                "end_date": e.get("end_date") or date_str,
+                "duration_minutes": e.get("duration_minutes"),
+                "description": e.get("description"),
+                "cause_of_interruption": e.get("cause_of_interruption"),
+                "relay_indications_lc_work": e.get("relay_indications_lc_work"),
+                "breakdown_declared": e.get("breakdown_declared"),
+                "fault_identified_during_patrolling": e.get(
+                    "fault_identified_during_patrolling"
+                ),
+                "fault_location": e.get("fault_location"),
+                "remarks": e.get("remarks"),
+                "action_taken": e.get("action_taken"),
+            }
+            entry_obj = InterruptionEntry(feeder_id=feeder_id, date=date_str, data=data).model_dump()
+            created_at = entry_obj.get("created_at")
+            updated_at = entry_obj.get("updated_at")
+            if isinstance(created_at, datetime):
+                entry_obj["created_at"] = created_at.isoformat()
+            if isinstance(updated_at, datetime):
+                entry_obj["updated_at"] = updated_at.isoformat()
+            if existing and overwrite:
+                await db.interruption_entries.replace_one(
+                    {
+                        "feeder_id": feeder_id,
+                        "date": date_str,
+                        "data.start_time": start_time,
+                    },
+                    entry_obj,
+                )
+            else:
+                await db.interruption_entries.insert_one(entry_obj)
+            inserted += 1
+            per_month[month_key]["inserted"] += 1
+        except Exception as exc:
+            validation_errors += 1
+            per_month[month_key]["validation_errors"] += 1
+            errors.append(
+                {"index": idx, "reason": str(exc), "date": date_str, "feeder_id": feeder_id}
+            )
+    per_month_rows = []
+    for key, stats in sorted(per_month.items()):
+        per_month_rows.append(
+            {
+                "month": key,
+                "inserted": stats["inserted"],
+                "skipped_existing": stats["skipped_existing"],
+                "validation_errors": stats["validation_errors"],
+            }
+        )
+    return {
+        "module": "Interruptions",
+        "year": year,
+        "month": month,
+        "overwrite": overwrite,
+        "total_entries": total_entries,
+        "inserted": inserted,
+        "skipped_existing": skipped_existing,
+        "validation_errors": validation_errors,
+        "per_month": per_month_rows,
+        "errors": errors,
+    }
+
+
+@api_router.post("/admin/bulk-import/check/interruptions")
+async def admin_bulk_import_check_interruptions(
+    payload: dict,
+    current_admin: User = Depends(get_current_admin),
+):
+    feeder_ids = payload.get("feeder_ids") or []
+    year = payload.get("year")
+    month = payload.get("month")
+    if not feeder_ids or not isinstance(feeder_ids, list):
+        raise HTTPException(status_code=400, detail="feeder_ids are required")
+    query: dict[str, Any] = {"feeder_id": {"$in": feeder_ids}}
+    if isinstance(year, int):
+        y = year
+        if isinstance(month, int):
+            start_date = f"{y:04d}-{month:02d}-01"
+            end_date = f"{y:04d}-{month:02d}-31"
+        else:
+            start_date = f"{y:04d}-01-01"
+            end_date = f"{y:04d}-12-31"
+        query["date"] = {"$gte": start_date, "$lte": end_date}
+    count = await db.interruption_entries.count_documents(query)
+    return {
+        "module": "Interruptions",
+        "feeder_ids": feeder_ids,
+        "year": year,
+        "month": month,
+        "has_existing": count > 0,
+        "total_existing": int(count),
+    }
+
 
 @api_router.get("/daily-status")
 async def check_daily_status(current_user: User = Depends(get_current_user)) -> dict:
