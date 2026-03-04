@@ -10320,24 +10320,24 @@ async def get_tl_max_loading_preview(
     }
 
     MD_SO_FAR_BASELINE = {
-        "400KV MAHESHWARAM-2": 426,
-        "400KV MAHESHWARAM-1": 425,
-        "400KV NARSAPUR-1": 564,
-        "400KV NARSAPUR-2": 561,
-        "400KV KETHIREDDYPALLY-1": 420,
-        "400KV KETHIREDDYPALLY-2": 418,
-        "400KV NIZAMABAD-1": 484,
-        "400KV NIZAMABAD-2": 584,
-        "220KV PARIGI-1": 170,
-        "220KV PARIGI-2": 170,
-        "220KV THANDUR": 208,
-        "220KV GACHIBOWLI-1": 306,
-        "220KV GACHIBOWLI-2": 376,
-        "220KV KETHIREDDYPALLY": 140,
-        "220KV YEDDUMAILARAM-1": 179,
-        "220KV YEDDUMAILARAM-2": 173,
-        "220KV SADASIVAPET-1": 116,
-        "220KV SADASIVAPET-2": 115,
+        "400KV MAHESHWARAM-2": {"mw": 426, "time": "12:00", "date": "16-07-2024"},
+        "400KV MAHESHWARAM-1": {"mw": 425, "time": "12:00", "date": "16-07-2024"},
+        "400KV NARSAPUR-1": {"mw": 564, "time": "07:00", "date": "14-11-2024"},
+        "400KV NARSAPUR-2": {"mw": 561, "time": "07:00", "date": "14-11-2024"},
+        "400KV KETHIREDDYPALLY-1": {"mw": 420, "time": "15:00", "date": "04-05-2024"},
+        "400KV KETHIREDDYPALLY-2": {"mw": 418, "time": "15:00", "date": "04-05-2024"},
+        "400KV NIZAMABAD-1": {"mw": 484, "time": "14:00", "date": "16-04-2024"},
+        "400KV NIZAMABAD-2": {"mw": 484, "time": "14:00", "date": "16-04-2024"},
+        "220KV PARIGI-1": {"mw": 170, "time": "16:00", "date": "19-10-2023"},
+        "220KV PARIGI-2": {"mw": 170, "time": "16:00", "date": "19-10-2023"},
+        "220KV THANDUR": {"mw": 208, "time": "14:00", "date": "02-12-2017"},
+        "220KV GACHIBOWLI-1": {"mw": 306, "time": "15:00", "date": "29-05-2020"},
+        "220KV GACHIBOWLI-2": {"mw": 376, "time": "15:00", "date": "29-05-2020"},
+        "220KV KETHIREDDYPALLY": {"mw": 140, "time": "12:00", "date": "17-05-2019"},
+        "220KV YEDDUMAILARAM-1": {"mw": 179, "time": "10:00", "date": "25-03-2017"},
+        "220KV YEDDUMAILARAM-2": {"mw": 173, "time": "10:00", "date": "25-03-2017"},
+        "220KV SADASIVAPET-1": {"mw": 116, "time": "07:00", "date": "04-03-2025"},
+        "220KV SADASIVAPET-2": {"mw": 115, "time": "07:00", "date": "04-03-2025"},
     }
 
     # Fetch all feeders (needed for group logic)
@@ -10346,7 +10346,7 @@ async def get_tl_max_loading_preview(
     all_feeder_id_map = {f['id']: f for f in all_db_feeders}
 
     MD_YEAR = 2026
-    md_2026_map: dict[str, float | None] = {}
+    md_2026_map: Dict[str, Any] = {}
 
     if year == MD_YEAR:
         md_start = f"{MD_YEAR}-01-01"
@@ -10403,7 +10403,11 @@ async def get_tl_max_loading_preview(
             max_mw_year = stats_year.get("max_mw", "-")
             max_mw_year_val = get_float_safe(max_mw_year)
             if max_mw_year_val is not None:
-                md_2026_map[feeder_name] = max_mw_year_val
+                md_2026_map[feeder_name] = {
+                    "mw": max_mw_year_val,
+                    "time": stats_year.get("max_mw_time", ""),
+                    "date": stats_year.get("max_mw_date", ""),
+                }
 
     # Fetch all entries for the month
     all_entries = await db.max_min_entries.find(
@@ -10482,16 +10486,41 @@ async def get_tl_max_loading_preview(
                 except:
                     pass
 
-            md_2026_num = md_2026_map.get(feeder_name)
-            if md_2026_num is not None:
-                md_2026_val_str = f"{md_2026_num:.0f}"
+            md_2026_obj = md_2026_map.get(feeder_name)
+            if isinstance(md_2026_obj, dict):
+                mw = md_2026_obj.get("mw")
+                t = format_time(md_2026_obj.get("time"))
+                d = format_date(md_2026_obj.get("date"))
+                if mw is not None:
+                    md_2026_val_str = f"{int(mw)} \n {t} \n {d}"
+            elif md_2026_obj is not None:
+                try:
+                    md_2026_val_str = f"{float(md_2026_obj):.0f}"
+                except:
+                    md_2026_val_str = str(md_2026_obj)
 
-            baseline = MD_SO_FAR_BASELINE.get(feeder_name)
-            final_md_so_far = baseline
-            if md_2026_num is not None and baseline is not None and md_2026_num > baseline:
-                final_md_so_far = md_2026_num
-            if final_md_so_far is not None:
-                md_so_far_val_str = f"{final_md_so_far:.0f}"
+            baseline_obj = MD_SO_FAR_BASELINE.get(feeder_name)
+            final_mw = None
+            final_time = ""
+            final_date = ""
+            if baseline_obj:
+                try:
+                    final_mw = float(baseline_obj.get("mw"))
+                except:
+                    final_mw = None
+                final_time = format_time(baseline_obj.get("time"))
+                final_date = baseline_obj.get("date") or ""
+            md_compare_val = None
+            if isinstance(md_2026_obj, dict):
+                md_compare_val = md_2026_obj.get("mw")
+            elif md_2026_obj is not None:
+                md_compare_val = get_float_safe(md_2026_obj)
+            if md_compare_val is not None and final_mw is not None and md_compare_val > final_mw:
+                final_mw = md_compare_val
+                final_time = ""
+                final_date = ""
+            if final_mw is not None:
+                md_so_far_val_str = f"{int(final_mw)} \n {final_time} \n {final_date}"
 
         display_name = DISPLAY_NAMES.get(feeder_name, feeder_name)
         voltage = "400 KV" if "400" in feeder_name else "220KV"

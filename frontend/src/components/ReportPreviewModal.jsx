@@ -425,10 +425,10 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                                     <TableCell className="text-center border p-2">{row.min?.mva?.toFixed(2)}</TableCell>
                                     <TableCell className="text-center border p-2">-</TableCell>
 
-                                    <TableCell className="text-center border p-2">
+                                    <TableCell className="text-center border p-2 whitespace-pre-line">
                                         {row.md_2026 !== undefined && row.md_2026 !== null ? row.md_2026 : ""}
                                     </TableCell>
-                                    <TableCell className="text-center border p-2">
+                                    <TableCell className="text-center border p-2 whitespace-pre-line">
                                         {row.md_so_far !== undefined && row.md_so_far !== null ? row.md_so_far : ""}
                                     </TableCell>
                                 </TableRow>
@@ -518,8 +518,8 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                                     <TableCell className="text-center border p-2">{row.mvar}</TableCell>
                                     <TableCell className="text-center border p-2 whitespace-nowrap">{row.date}</TableCell>
                                     <TableCell className="text-center border p-2">{row.time}</TableCell>
-                                    <TableCell className="text-center border p-2">{row.md_2026}</TableCell>
-                                    <TableCell className="text-center border p-2">{row.md_so_far}</TableCell>
+                                    <TableCell className="text-center border p-2 whitespace-pre-line">{row.md_2026}</TableCell>
+                                    <TableCell className="text-center border p-2 whitespace-pre-line">{row.md_so_far}</TableCell>
                                     <TableCell className="text-center border p-2">{row.remarks}</TableCell>
                                 </TableRow>
                             ))
