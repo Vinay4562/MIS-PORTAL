@@ -375,8 +375,8 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                             <TableHead colSpan={2} className="text-center border bg-muted h-auto py-2">General Loading</TableHead>
                             <TableHead colSpan={6} className="text-center border bg-muted h-auto py-2">Maximum Load Details</TableHead>
                             <TableHead colSpan={6} className="text-center border bg-muted h-auto py-2">Minimum Load Details</TableHead>
-                            <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2">MD reached in 2026</TableHead>
-                            <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2">MD reached so far</TableHead>
+                            <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2 min-w-[160px]">MD reached in 2026</TableHead>
+                            <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2 min-w-[160px]">MD reached so far</TableHead>
                         </TableRow>
                         <TableRow>
                             <TableHead className="text-center border bg-muted h-auto py-2">MW</TableHead>
@@ -410,7 +410,7 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                                     <TableCell className="text-center border p-2">{row.general.mvar?.toFixed(2)}</TableCell>
                                     
                                     {/* Max Details */}
-                                    <TableCell className="text-center border p-2 whitespace-nowrap">{row.max?.date ? new Date(row.max.date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '-'}</TableCell>
+                                    <TableCell className="text-center border p-2 whitespace-nowrap">{row.max?.date ? new Date(row.max.date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\//g, '.') : '-'}</TableCell>
                                     <TableCell className="text-center border p-2">{row.max?.time || '-'}</TableCell>
                                     <TableCell className="text-center border p-2">{row.max?.mw?.toFixed(2)}</TableCell>
                                     <TableCell className="text-center border p-2">{row.max?.mvar?.toFixed(2)}</TableCell>
@@ -418,17 +418,17 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                                     <TableCell className="text-center border p-2">-</TableCell>
                                     
                                     {/* Min Details */}
-                                    <TableCell className="text-center border p-2 whitespace-nowrap">{row.min?.date ? new Date(row.min.date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '-'}</TableCell>
+                                    <TableCell className="text-center border p-2 whitespace-nowrap">{row.min?.date ? new Date(row.min.date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\//g, '.') : '-'}</TableCell>
                                     <TableCell className="text-center border p-2">{row.min?.time || '-'}</TableCell>
                                     <TableCell className="text-center border p-2">{row.min?.mw?.toFixed(2)}</TableCell>
                                     <TableCell className="text-center border p-2">{row.min?.mvar?.toFixed(2)}</TableCell>
                                     <TableCell className="text-center border p-2">{row.min?.mva?.toFixed(2)}</TableCell>
                                     <TableCell className="text-center border p-2">-</TableCell>
 
-                                    <TableCell className="text-center border p-2 whitespace-pre-line">
+                                    <TableCell className="text-center border p-2 whitespace-pre-line min-w-[160px]">
                                         {row.md_2026 !== undefined && row.md_2026 !== null ? row.md_2026 : ""}
                                     </TableCell>
-                                    <TableCell className="text-center border p-2 whitespace-pre-line">
+                                    <TableCell className="text-center border p-2 whitespace-pre-line min-w-[160px]">
                                         {row.md_so_far !== undefined && row.md_so_far !== null ? row.md_so_far : ""}
                                     </TableCell>
                                 </TableRow>
@@ -475,8 +475,8 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                             <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2">Sub-Station Name</TableHead>
                             <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2 min-w-[250px]">Transmission Line Name</TableHead>
                             <TableHead colSpan={4} className="text-center border bg-muted h-auto py-2">MAXIMUM</TableHead>
-                            <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2">MD reached in 2026</TableHead>
-                            <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2">MD reached so far</TableHead>
+                            <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2 min-w-[160px]">MD reached in 2026</TableHead>
+                            <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2 min-w-[160px]">MD reached so far</TableHead>
                             <TableHead rowSpan={2} className="text-center border bg-muted h-auto py-2">Remarks</TableHead>
                         </TableRow>
                         <TableRow>
@@ -518,8 +518,8 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                                     <TableCell className="text-center border p-2">{row.mvar}</TableCell>
                                     <TableCell className="text-center border p-2 whitespace-nowrap">{row.date}</TableCell>
                                     <TableCell className="text-center border p-2">{row.time}</TableCell>
-                                    <TableCell className="text-center border p-2 whitespace-pre-line">{row.md_2026}</TableCell>
-                                    <TableCell className="text-center border p-2 whitespace-pre-line">{row.md_so_far}</TableCell>
+                                    <TableCell className="text-center border p-2 whitespace-pre-line min-w-[160px]">{row.md_2026}</TableCell>
+                                    <TableCell className="text-center border p-2 whitespace-pre-line min-w-[160px]">{row.md_so_far}</TableCell>
                                     <TableCell className="text-center border p-2">{row.remarks}</TableCell>
                                 </TableRow>
                             ))

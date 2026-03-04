@@ -9929,14 +9929,14 @@ async def get_ptr_max_min_preview(
     ict_feeders.sort(key=lambda x: ICT_ORDER.index(x['name']) if x['name'] in ICT_ORDER else 999)
 
     MD_SO_FAR_BASELINE_PTR = {
-        "ICT-1 (315MVA)": 226,
-        "ICT-2 (315MVA)": 225,
-        "ICT-3 (315MVA)": 226,
-        "ICT-4 (500MVA)": 387,
+        "ICT-1 (315MVA)": {"mw": 226, "time": "16:00", "date": "20-03-2025"},
+        "ICT-2 (315MVA)": {"mw": 225, "time": "16:00", "date": "20-03-2025"},
+        "ICT-3 (315MVA)": {"mw": 226, "time": "16:00", "date": "20-03-2025"},
+        "ICT-4 (500MVA)": {"mw": 387, "time": "16:00", "date": "20-03-2025"},
     }
 
     MD_YEAR_PTR = 2026
-    md_2026_map: dict[str, float] = {}
+    md_2026_map: Dict[str, Any] = {}
 
     if year == MD_YEAR_PTR and ict_feeders:
         md_start = f"{MD_YEAR_PTR}-01-01"
@@ -9961,12 +9961,18 @@ async def get_ptr_max_min_preview(
                 if not feeder_id:
                     continue
                 d = e.get("data", {})
-                mw_val = get_float_safe(d.get("max", {}).get("mw"))
+                max_block = d.get("max", {}) or {}
+                mw_val = get_float_safe(max_block.get("mw"))
                 if mw_val is None:
                     continue
                 prev = md_2026_map.get(feeder_id)
-                if prev is None or mw_val > prev:
-                    md_2026_map[feeder_id] = mw_val
+                prev_mw = prev.get("mw") if isinstance(prev, dict) else prev
+                if prev_mw is None or mw_val > prev_mw:
+                    md_2026_map[feeder_id] = {
+                        "mw": mw_val,
+                        "time": max_block.get("time"),
+                        "date": e.get("date"),
+                    }
     
     data = []
     
@@ -9982,11 +9988,32 @@ async def get_ptr_max_min_preview(
             if "500" in feeder['name']:
                 rating = "500"
 
-            md_2026_val = md_2026_map.get(feeder["id"]) if year == MD_YEAR_PTR else None
-            baseline = MD_SO_FAR_BASELINE_PTR.get(feeder["name"])
-            final_md_so_far = baseline
-            if year == MD_YEAR_PTR and md_2026_val is not None and baseline is not None and md_2026_val > baseline:
-                final_md_so_far = md_2026_val
+            md_2026_obj = md_2026_map.get(feeder["id"]) if year == MD_YEAR_PTR else None
+            baseline_obj = MD_SO_FAR_BASELINE_PTR.get(feeder["name"])
+            final_mw = None
+            final_time = ""
+            final_date = ""
+            if baseline_obj:
+                try:
+                    final_mw = float(baseline_obj.get("mw"))
+                except:
+                    final_mw = None
+                final_time = format_time(baseline_obj.get("time"))
+                final_date = baseline_obj.get("date") or ""
+            md_compare_mw = None
+            md_time = ""
+            md_date = ""
+            if isinstance(md_2026_obj, dict):
+                md_compare_mw = md_2026_obj.get("mw")
+                md_time_base = format_time(md_2026_obj.get("time"))
+                md_time = (md_time_base + ":00") if md_time_base and len(md_time_base) == 5 else md_time_base
+                md_date = (format_date(md_2026_obj.get("date")) or "").replace("-", ".")
+            elif md_2026_obj is not None:
+                md_compare_mw = get_float_safe(md_2026_obj)
+            if year == MD_YEAR_PTR and md_compare_mw is not None and final_mw is not None and md_compare_mw > final_mw:
+                final_mw = md_compare_mw
+                final_time = ""
+                final_date = ""
 
             data.append({
                 "district": "Rangareddy",
@@ -9996,8 +10023,8 @@ async def get_ptr_max_min_preview(
                 "general": {"mw": 0, "mvar": 0},
                 "max": None,
                 "min": None,
-                "md_2026": md_2026_val,
-                "md_so_far": final_md_so_far
+                "md_2026": (f"{int(md_compare_mw)} \n {md_time} \n {md_date}" if isinstance(md_2026_obj, dict) and md_compare_mw is not None else md_compare_mw),
+                "md_so_far": (f"{int(final_mw)} \n {final_time} \n {final_date}" if final_mw is not None else "")
             })
             continue
             
@@ -10063,7 +10090,7 @@ async def get_ptr_max_min_preview(
             mvar_val = float(md.get('mvar', 0) or 0)
             max_details = {
                 "date": max_entry['date'],
-                "time": format_time(md.get('time', '')),
+                "time": (lambda s: (format_time(s) + ":00") if format_time(s) and len(format_time(s)) == 5 else format_time(s))(md.get('time', '')),
                 "mw": mw_val,
                 "mvar": mvar_val,
                 "mva": (mw_val**2 + mvar_val**2)**0.5
@@ -10079,7 +10106,7 @@ async def get_ptr_max_min_preview(
             mvar_val = float(md.get('mvar', 0) or 0)
             min_details = {
                 "date": min_entry['date'],
-                "time": format_time(md.get('time', '')),
+                "time": (lambda s: (format_time(s) + ":00") if format_time(s) and len(format_time(s)) == 5 else format_time(s))(md.get('time', '')),
                 "mw": mw_val,
                 "mvar": mvar_val,
                 "mva": (mw_val**2 + mvar_val**2)**0.5
@@ -10091,11 +10118,32 @@ async def get_ptr_max_min_preview(
         if "500" in feeder['name']:
             rating = "500"
 
-        md_2026_val = md_2026_map.get(feeder["id"]) if year == MD_YEAR_PTR else None
-        baseline = MD_SO_FAR_BASELINE_PTR.get(feeder["name"])
-        final_md_so_far = baseline
-        if year == MD_YEAR_PTR and md_2026_val is not None and baseline is not None and md_2026_val > baseline:
-            final_md_so_far = md_2026_val
+        md_2026_obj = md_2026_map.get(feeder["id"]) if year == MD_YEAR_PTR else None
+        baseline_obj = MD_SO_FAR_BASELINE_PTR.get(feeder["name"])
+        final_mw = None
+        final_time = ""
+        final_date = ""
+        if baseline_obj:
+            try:
+                final_mw = float(baseline_obj.get("mw"))
+            except:
+                final_mw = None
+            final_time_base = format_time(baseline_obj.get("time"))
+            final_time = (final_time_base + ":00") if final_time_base and len(final_time_base) == 5 else final_time_base
+            final_date = (baseline_obj.get("date") or "").replace("-", ".")
+        md_compare_mw = None
+        md_time = ""
+        md_date = ""
+        if isinstance(md_2026_obj, dict):
+            md_compare_mw = md_2026_obj.get("mw")
+            md_time = format_time(md_2026_obj.get("time"))
+            md_date = format_date(md_2026_obj.get("date"))
+        elif md_2026_obj is not None:
+            md_compare_mw = get_float_safe(md_2026_obj)
+        if year == MD_YEAR_PTR and md_compare_mw is not None and final_mw is not None and md_compare_mw > final_mw:
+            final_mw = md_compare_mw
+            final_time = ""
+            final_date = ""
 
         data.append({
             "district": "Rangareddy",
@@ -10108,8 +10156,8 @@ async def get_ptr_max_min_preview(
             },
             "max": max_details,
             "min": min_details,
-            "md_2026": md_2026_val,
-            "md_so_far": final_md_so_far
+            "md_2026": (f"{int(md_compare_mw)} \n {md_time} \n {md_date}" if isinstance(md_2026_obj, dict) and md_compare_mw is not None else md_compare_mw),
+            "md_so_far": (f"{int(final_mw)} \n {final_time} \n {final_date}" if final_mw is not None else "")
         })
         
     return data
@@ -10194,7 +10242,7 @@ async def _generate_ptr_max_min_report_wb(year: int, month: int, current_user: U
         m = item['max']
         if m:
             set_style(ws.cell(row=row_idx, column=7, value=format_date(m['date'])))
-            set_style(ws.cell(row=row_idx, column=8, value=m['time']))
+            set_style(ws.cell(row=row_idx, column=8, value=(m['time'] + ":00" if m['time'] and len(str(m['time'])) == 5 else m['time'])))
             set_style(ws.cell(row=row_idx, column=9, value=f"{m['mw']:.2f}"))
             set_style(ws.cell(row=row_idx, column=10, value=f"{m['mvar']:.2f}"))
             set_style(ws.cell(row=row_idx, column=11, value=f"{m['mva']:.2f}"))
@@ -10206,7 +10254,7 @@ async def _generate_ptr_max_min_report_wb(year: int, month: int, current_user: U
         m = item['min']
         if m:
             set_style(ws.cell(row=row_idx, column=13, value=format_date(m['date'])))
-            set_style(ws.cell(row=row_idx, column=14, value=m['time']))
+            set_style(ws.cell(row=row_idx, column=14, value=(m['time'] + ":00" if m['time'] and len(str(m['time'])) == 5 else m['time'])))
             set_style(ws.cell(row=row_idx, column=15, value=f"{m['mw']:.2f}"))
             set_style(ws.cell(row=row_idx, column=16, value=f"{m['mvar']:.2f}"))
             set_style(ws.cell(row=row_idx, column=17, value=f"{m['mva']:.2f}"))
