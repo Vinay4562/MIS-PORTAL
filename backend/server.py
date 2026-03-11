@@ -10012,8 +10012,9 @@ async def get_ptr_max_min_preview(
                 md_compare_mw = get_float_safe(md_2026_obj)
             if year == MD_YEAR_PTR and md_compare_mw is not None and final_mw is not None and md_compare_mw > final_mw:
                 final_mw = md_compare_mw
-                final_time = ""
-                final_date = ""
+                # Carry over 2026 MD time/date when it exceeds baseline
+                final_time = md_time
+                final_date = md_date
 
             data.append({
                 "district": "Rangareddy",
@@ -10142,8 +10143,9 @@ async def get_ptr_max_min_preview(
             md_compare_mw = get_float_safe(md_2026_obj)
         if year == MD_YEAR_PTR and md_compare_mw is not None and final_mw is not None and md_compare_mw > final_mw:
             final_mw = md_compare_mw
-            final_time = ""
-            final_date = ""
+            # Carry over 2026 MD time/date when it exceeds baseline
+            final_time = md_time
+            final_date = md_date
 
         data.append({
             "district": "Rangareddy",
@@ -10565,8 +10567,13 @@ async def get_tl_max_loading_preview(
                 md_compare_val = get_float_safe(md_2026_obj)
             if md_compare_val is not None and final_mw is not None and md_compare_val > final_mw:
                 final_mw = md_compare_val
-                final_time = ""
-                final_date = ""
+                # When 2026 MD exceeds baseline, carry over its time and date
+                if isinstance(md_2026_obj, dict):
+                    final_time = format_time(md_2026_obj.get("time"))
+                    final_date = format_date(md_2026_obj.get("date"))
+                else:
+                    final_time = ""
+                    final_date = ""
             if final_mw is not None:
                 md_so_far_val_str = f"{int(final_mw)} \n {final_time} \n {final_date}"
 
