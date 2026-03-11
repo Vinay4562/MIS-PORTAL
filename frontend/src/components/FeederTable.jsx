@@ -68,6 +68,11 @@ export default function FeederTable({ feeder, entries, loading, onUpdate, onDele
     return typeof num === 'number' ? num.toFixed(2) : '0.00';
   };
 
+  const formatValue = (num) => {
+    if (typeof num !== 'number' || isNaN(num)) return '';
+    return Number.isInteger(num) ? String(num) : num.toFixed(2);
+  };
+
   const getLossColor = (percent) => {
     if (percent > 5) return 'text-red-600 font-bold';
     if (percent < 0) return 'text-green-600 font-bold';
@@ -103,7 +108,7 @@ export default function FeederTable({ feeder, entries, loading, onUpdate, onDele
         />
       );
     }
-    return <span className="font-medium">{formatNumber(value)}</span>;
+    return <span className="font-medium">{formatValue(value)}</span>;
   };
 
   const renderSectionHeader = (title) => (
@@ -169,7 +174,7 @@ export default function FeederTable({ feeder, entries, loading, onUpdate, onDele
                       {feeder.end1_import_mf}
                     </td>
                     <td className="px-2 py-3 text-center border-r border-slate-200 dark:border-slate-700 font-bold text-blue-600 dark:text-blue-400">
-                      {formatNumber(entry.end1_import_consumption)}
+                      {formatValue(entry.end1_import_consumption)}
                     </td>
 
                     {/* End 1 Export */}
@@ -183,7 +188,7 @@ export default function FeederTable({ feeder, entries, loading, onUpdate, onDele
                       {feeder.end1_export_mf}
                     </td>
                     <td className="px-2 py-3 text-center border-r border-slate-200 dark:border-slate-700 font-bold text-blue-600 dark:text-blue-400">
-                      {formatNumber(entry.end1_export_consumption)}
+                      {formatValue(entry.end1_export_consumption)}
                     </td>
 
                     {/* End 2 Import */}
@@ -197,7 +202,7 @@ export default function FeederTable({ feeder, entries, loading, onUpdate, onDele
                       {feeder.end2_import_mf}
                     </td>
                     <td className="px-2 py-3 text-center border-r border-slate-200 dark:border-slate-700 font-bold text-blue-600 dark:text-blue-400">
-                      {formatNumber(entry.end2_import_consumption)}
+                      {formatValue(entry.end2_import_consumption)}
                     </td>
 
                     {/* End 2 Export */}
@@ -211,7 +216,7 @@ export default function FeederTable({ feeder, entries, loading, onUpdate, onDele
                       {feeder.end2_export_mf}
                     </td>
                     <td className="px-2 py-3 text-center border-r border-slate-200 dark:border-slate-700 font-bold text-blue-600 dark:text-blue-400">
-                      {formatNumber(entry.end2_export_consumption)}
+                      {formatValue(entry.end2_export_consumption)}
                     </td>
 
                     {/* Loss % */}

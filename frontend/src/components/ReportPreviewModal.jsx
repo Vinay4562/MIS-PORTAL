@@ -19,6 +19,13 @@ import { BlockLoader } from "@/components/ui/loader";
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
+const formatLL = (v) => {
+  if (v == null) return "";
+  const n = typeof v === "number" ? v : parseFloat(v);
+  if (isNaN(n)) return String(v);
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
+};
+
 export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year, month, subtitle, onPrev, onNext, hasNext, date, reportId }) {
   
   const renderContent = () => {
@@ -347,10 +354,10 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                                     <TableRow key={meter.sl_no}>
                                         <TableCell className="text-center border p-2">{meter.sl_no}</TableCell>
                                         <TableCell className="border p-2 whitespace-nowrap">{meter.name}</TableCell>
-                                        <TableCell className="text-center border p-2">{meter.initial?.toFixed(2) ?? '-'}</TableCell>
-                                        <TableCell className="text-center border p-2">{meter.final?.toFixed(2) ?? '-'}</TableCell>
+                                        <TableCell className="text-center border p-2">{meter.initial != null ? formatLL(meter.initial) : '-'}</TableCell>
+                                        <TableCell className="text-center border p-2">{meter.final != null ? formatLL(meter.final) : '-'}</TableCell>
                                         <TableCell className="text-center border p-2">{meter.mf}</TableCell>
-                                        <TableCell className="text-center border p-2 font-medium">{meter.consumption?.toFixed(2) ?? '-'}</TableCell>
+                                        <TableCell className="text-center border p-2 font-medium">{meter.consumption != null ? formatLL(meter.consumption) : '-'}</TableCell>
                                         <TableCell className="text-center border p-2">{meter.unit}</TableCell>
                                     </TableRow>
                                 ))}
@@ -943,9 +950,7 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                                                     {exportRow.sh_mf}
                                                 </TableCell>
                                                 <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">
-                                                    {exportRow.sh_consumption != null
-                                                        ? exportRow.sh_consumption.toFixed(2)
-                                                        : ""}
+                                                    {formatLL(exportRow.sh_consumption)}
                                                 </TableCell>
 
                                                 <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
@@ -958,9 +963,7 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                                                     {exportRow.other_mf}
                                                 </TableCell>
                                                 <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">
-                                                    {exportRow.other_consumption != null
-                                                        ? exportRow.other_consumption.toFixed(2)
-                                                        : ""}
+                                                    {formatLL(exportRow.other_consumption)}
                                                 </TableCell>
 
                                                 <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">
@@ -1000,9 +1003,7 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                                                     {importRow.sh_mf}
                                                 </TableCell>
                                                 <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">
-                                                    {importRow.sh_consumption != null
-                                                        ? importRow.sh_consumption.toFixed(2)
-                                                        : ""}
+                                                    {formatLL(importRow.sh_consumption)}
                                                 </TableCell>
 
                                                 <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
@@ -1015,9 +1016,7 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                                                     {importRow.other_mf}
                                                 </TableCell>
                                                 <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">
-                                                    {importRow.other_consumption != null
-                                                        ? importRow.other_consumption.toFixed(2)
-                                                        : ""}
+                                                    {formatLL(importRow.other_consumption)}
                                                 </TableCell>
 
                                                 <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">
@@ -1106,9 +1105,7 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                                         {row.shankarpally?.import?.mf}
                                     </TableCell>
                                     <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">
-                                        {row.shankarpally?.import?.consumption != null
-                                            ? row.shankarpally.import.consumption.toFixed(2)
-                                            : ""}
+                                        {formatLL(row.shankarpally?.import?.consumption)}
                                     </TableCell>
 
                                     <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
@@ -1121,9 +1118,7 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                                         {row.shankarpally?.export?.mf}
                                     </TableCell>
                                     <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">
-                                        {row.shankarpally?.export?.consumption != null
-                                            ? row.shankarpally.export.consumption.toFixed(2)
-                                            : ""}
+                                        {formatLL(row.shankarpally?.export?.consumption)}
                                     </TableCell>
 
                                     <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
@@ -1136,9 +1131,7 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                                         {row.other_end?.import?.mf}
                                     </TableCell>
                                     <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">
-                                        {row.other_end?.import?.consumption != null
-                                            ? row.other_end.import.consumption.toFixed(2)
-                                            : ""}
+                                        {formatLL(row.other_end?.import?.consumption)}
                                     </TableCell>
 
                                     <TableCell className="text-right border px-2 py-2 whitespace-nowrap">
@@ -1151,9 +1144,7 @@ export function ReportPreviewModal({ isOpen, onClose, title, data, loading, year
                                         {row.other_end?.export?.mf}
                                     </TableCell>
                                     <TableCell className="text-right border px-2 py-2 font-medium whitespace-nowrap">
-                                        {row.other_end?.export?.consumption != null
-                                            ? row.other_end.export.consumption.toFixed(2)
-                                            : ""}
+                                        {formatLL(row.other_end?.export?.consumption)}
                                     </TableCell>
 
                                     <TableCell className="text-right border px-2 py-2 font-bold whitespace-nowrap">

@@ -15,6 +15,13 @@ export default function EnergyTable({ sheet, entries, loading, onEdit, onDelete 
     return <div className="p-8 text-center text-slate-500">No entries found for this period</div>;
   }
 
+  const formatValue = (v) => {
+    if (v == null) return '-';
+    const n = typeof v === 'number' ? v : parseFloat(v);
+    if (isNaN(n)) return '-';
+    return Number.isInteger(n) ? String(n) : n.toFixed(2);
+  };
+
   return (
     <div className="rounded-md border border-slate-200 dark:border-slate-700 overflow-hidden">
       <div className="overflow-x-auto">
@@ -52,11 +59,11 @@ export default function EnergyTable({ sheet, entries, loading, onEdit, onDelete 
                   const reading = entry.readings.find(r => r.meter_id === meter.id);
                   return (
                     <Fragment key={meter.id}>
-                      <td className="px-2 py-3 text-center border-r text-slate-500">{reading?.initial?.toFixed(2) || '-'}</td>
-                      <td className="px-2 py-3 text-center border-r font-medium">{reading?.final?.toFixed(2) || '-'}</td>
+                      <td className="px-2 py-3 text-center border-r text-slate-500">{formatValue(reading?.initial)}</td>
+                      <td className="px-2 py-3 text-center border-r font-medium">{formatValue(reading?.final)}</td>
                       <td className="px-2 py-3 text-center border-r text-slate-400">{meter.mf}</td>
                       <td className="px-2 py-3 text-center border-r font-bold text-blue-600 dark:text-blue-400">
-                        {reading?.consumption?.toFixed(2) || '-'}
+                        {formatValue(reading?.consumption)}
                       </td>
                     </Fragment>
                   );

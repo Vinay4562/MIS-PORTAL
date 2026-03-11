@@ -1,4 +1,4 @@
- import React, { useState, useEffect, Fragment, useRef } from 'react';
+import React, { useState, useEffect, Fragment, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -59,6 +59,15 @@ const formatTime = (t) => {
     }
   }
   return str;
+};
+
+const formatNoDecimals = (v) => {
+  if (v == null) return '';
+  const s = String(v).trim();
+  if (s === 'N/S' || s === '-') return s;
+  const n = parseFloat(s);
+  if (isNaN(n)) return s;
+  return String(Math.trunc(n));
 };
 
 const FEEDER_ORDER = [
@@ -355,6 +364,82 @@ export default function MaxMinData() {
     }
   }, [selectedFeeder, year, month, feeders, showDateSelector]);
 
+  const getStationLoad = useCallback((date) => {
+    let totalMaxMW = 0;
+    let totalMVAR = 0;
+    let commonTime = '-';
+    let hasData = false;
+    
+    Object.values(ictEntries).forEach(feederEntries => {
+      const entry = feederEntries.find(e => e.date === date);
+      const maxMW = entry?.data?.max?.mw;
+      
+      if (maxMW && maxMW !== 'N/S') {
+        totalMaxMW += parseFloat(maxMW) || 0;
+        hasData = true;
+        
+        if (entry.data.max.time && entry.data.max.time !== 'N/S' && commonTime === '-') {
+            commonTime = entry.data.max.time;
+        }
+      }
+      
+      const maxMVAR = entry?.data?.max?.mvar;
+      if (maxMVAR && maxMVAR !== 'N/S') {
+        totalMVAR += parseFloat(maxMVAR) || 0;
+      }
+    });
+    
+    if (!hasData) return null;
+    return { max_mw: totalMaxMW.toFixed(2), mvar: totalMVAR.toFixed(2), time: commonTime };
+  }, [ictEntries]);
+
+  useEffect(() => {
+    const persistStationLoad = async () => {
+      if (selectedFeeder?.type !== 'bus_station' || showDateSelector) return;
+      if (!entries || entries.length === 0) return;
+      const saves = [];
+      entries.forEach(e => {
+        const calc = getStationLoad(e.date);
+        if (!calc) return;
+        const existing = e.data?.station_load;
+        const needUpdate =
+          !existing ||
+          existing.max_mw !== calc.max_mw ||
+          existing.mvar !== calc.mvar ||
+          existing.time !== calc.time;
+        if (needUpdate) {
+          saves.push({
+            id: e.id,
+            feeder_id: selectedFeeder.id,
+            date: e.date,
+            data: { ...e.data, station_load: { max_mw: calc.max_mw, mvar: calc.mvar, time: calc.time } },
+          });
+        }
+      });
+      if (!saves.length) return;
+      const results = await Promise.allSettled(
+        saves.map(s =>
+          axios.put(`${API}/max-min/entries/${s.id}`, {
+            feeder_id: s.feeder_id,
+            date: s.date,
+            data: s.data,
+          })
+        )
+      );
+      const updated = [...entries];
+      results.forEach(res => {
+        if (res.status === 'fulfilled') {
+          const updatedEntry = res.value.data;
+          const i = updated.findIndex(x => x.id === updatedEntry.id);
+          if (i !== -1) updated[i] = updatedEntry;
+        }
+      });
+      setEntries(updated.sort((a, b) => a.date.localeCompare(b.date)));
+      fetchDailyStatus();
+    };
+    persistStationLoad();
+  }, [ictEntries, entries, selectedFeeder, showDateSelector, year, month, getStationLoad]);
+
   const handleFeederChange = (feederId) => {
     const feeder = feeders.find(f => f.id === feederId);
     if (feeder) {
@@ -544,35 +629,7 @@ export default function MaxMinData() {
     }
   };
 
-  const getStationLoad = (date) => {
-    let totalMaxMW = 0;
-    let totalMVAR = 0;
-    let commonTime = '-';
-    let hasData = false;
-    
-    Object.values(ictEntries).forEach(feederEntries => {
-      const entry = feederEntries.find(e => e.date === date);
-      const maxMW = entry?.data?.max?.mw;
-      
-      if (maxMW && maxMW !== 'N/S') {
-        totalMaxMW += parseFloat(maxMW) || 0;
-        hasData = true;
-        
-        // Capture the common time from the first valid entry
-        if (entry.data.max.time && entry.data.max.time !== 'N/S' && commonTime === '-') {
-            commonTime = entry.data.max.time;
-        }
-      }
-      
-      const maxMVAR = entry?.data?.max?.mvar;
-      if (maxMVAR && maxMVAR !== 'N/S') {
-        totalMVAR += parseFloat(maxMVAR) || 0;
-      }
-    });
-    
-    if (!hasData) return null;
-    return { max_mw: totalMaxMW.toFixed(2), mvar: totalMVAR.toFixed(2), time: commonTime };
-  };
+ 
 
   const monthNames = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -924,20 +981,20 @@ export default function MaxMinData() {
                                             */}<TableCell className="text-center">{getVal(entry.data, 'min_bus_voltage_220kv.value')}</TableCell>{/*
                                             */}<TableCell className="text-center">{formatTime(getVal(entry.data, 'min_bus_voltage.time') || getVal(entry.data, 'min_bus_voltage_400kv.time') || getVal(entry.data, 'min_bus_voltage_220kv.time'))}</TableCell>{/*
                                             
-                                            */}<TableCell className="border-l text-center">{getStationLoad(entry.date)?.max_mw || getVal(entry.data, 'station_load.max_mw')}</TableCell>{/*
-                                            */}<TableCell className="text-center">{getStationLoad(entry.date)?.mvar || getVal(entry.data, 'station_load.mvar')}</TableCell>{/*
+                                            */}<TableCell className="border-l text-center">{formatNoDecimals(getStationLoad(entry.date)?.max_mw || getVal(entry.data, 'station_load.max_mw'))}</TableCell>{/*
+                                            */}<TableCell className="text-center">{formatNoDecimals(getStationLoad(entry.date)?.mvar || getVal(entry.data, 'station_load.mvar'))}</TableCell>{/*
                                             */}<TableCell className="text-center">{formatTime(getStationLoad(entry.date)?.time || getVal(entry.data, 'station_load.time'))}</TableCell>
                                         </>
                                     ) : (
                                         <>
                                             <TableCell className="border-l text-center">{getVal(entry.data, 'max.amps')}</TableCell>{/*
-                                            */}<TableCell className="text-center">{getVal(entry.data, 'max.mw')}</TableCell>{/*
-                                            */}{selectedFeeder.type === 'ict_feeder' && <TableCell className="text-center">{getVal(entry.data, 'max.mvar')}</TableCell>}{/*
+                                            */}<TableCell className="text-center">{formatNoDecimals(getVal(entry.data, 'max.mw'))}</TableCell>{/*
+                                            */}{selectedFeeder.type === 'ict_feeder' && <TableCell className="text-center">{formatNoDecimals(getVal(entry.data, 'max.mvar'))}</TableCell>}{/*
                                             */}<TableCell className="text-center">{formatTime(getVal(entry.data, 'max.time'))}</TableCell>{/*
                                             
                                             */}<TableCell className="border-l text-center">{getVal(entry.data, 'min.amps')}</TableCell>{/*
                                             */}<TableCell className="text-center">{getVal(entry.data, 'min.mw')}</TableCell>{/*
-                                            */}{selectedFeeder.type === 'ict_feeder' && <TableCell className="text-center">{getVal(entry.data, 'min.mvar')}</TableCell>}{/*
+                                            */}{selectedFeeder.type === 'ict_feeder' && <TableCell className="text-center">{formatNoDecimals(getVal(entry.data, 'min.mvar'))}</TableCell>}{/*
                                             */}<TableCell className="text-center">{formatTime(getVal(entry.data, 'min.time'))}</TableCell>{/*
                                             
                                             */}<TableCell className="border-l text-center">{getVal(entry.data, 'avg.amps')}</TableCell>{/*
