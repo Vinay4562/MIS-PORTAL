@@ -12,6 +12,7 @@ import LineLosses from '@/pages/LineLosses';
 import EnergyConsumption from '@/pages/EnergyConsumption';
 import MaxMinData from '@/pages/MaxMinData';
 import Interruptions from '@/pages/Interruptions';
+import StationLoads from '@/pages/StationLoads';
 import Reports from '@/pages/Reports';
 import DashboardLayout from '@/components/DashboardLayout';
 import AdminLayout from '@/components/admin/AdminLayout';
@@ -131,6 +132,13 @@ function App() {
               <ProtectedRoute>
                 <DashboardLayout>
                   <Interruptions />
+                </DashboardLayout>
+              </ProtectedRoute>
+            } />
+            <Route path="/station-loads" element={
+              <ProtectedRoute>
+                <DashboardLayout>
+                  <StationLoads />
                 </DashboardLayout>
               </ProtectedRoute>
             } />
